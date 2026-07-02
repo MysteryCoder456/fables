@@ -188,7 +188,14 @@ fn handle_net_events(
         With<PlayerShip>,
     >,
     planets: Query<(&crate::components::Planet, &NetId, Option<&ResourceDeposit>)>,
-    asteroids: Query<(&NetId, &SimPosition, &SimRotation, &Asteroid, &Spin, &ResourceDeposit)>,
+    asteroids: Query<(
+        &NetId,
+        &SimPosition,
+        &SimRotation,
+        &Asteroid,
+        &Spin,
+        &ResourceDeposit,
+    )>,
 ) {
     while let Ok(event) = net.events.try_recv() {
         match event {
@@ -238,16 +245,18 @@ fn handle_net_events(
                             .collect(),
                         asteroids: asteroids
                             .iter()
-                            .map(|(net_id, pos, rot, asteroid, spin, deposit)| AsteroidNetInit {
-                                net_id: *net_id,
-                                position: pos.current,
-                                rotation: rot.current,
-                                size: asteroid.size,
-                                spin: spin.0,
-                                kind: deposit.kind,
-                                amount: deposit.amount,
-                                max_amount: deposit.max_amount,
-                            })
+                            .map(
+                                |(net_id, pos, rot, asteroid, spin, deposit)| AsteroidNetInit {
+                                    net_id: *net_id,
+                                    position: pos.current,
+                                    rotation: rot.current,
+                                    size: asteroid.size,
+                                    spin: spin.0,
+                                    kind: deposit.kind,
+                                    amount: deposit.amount,
+                                    max_amount: deposit.max_amount,
+                                },
+                            )
                             .collect(),
                     },
                 );

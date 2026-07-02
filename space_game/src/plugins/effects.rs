@@ -195,7 +195,13 @@ fn update_mining_beams(
     ships: Query<(Entity, &Transform, &MiningRig), With<PlayerShip>>,
     targets: Query<&Transform, Without<BeamOf>>,
     mut beams: Query<
-        (Entity, &BeamOf, &mut Transform, &mut Sprite, &mut Visibility),
+        (
+            Entity,
+            &BeamOf,
+            &mut Transform,
+            &mut Sprite,
+            &mut Visibility,
+        ),
         Without<PlayerShip>,
     >,
 ) {

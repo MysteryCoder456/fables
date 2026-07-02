@@ -284,7 +284,11 @@ fn update_mining_bar(
         node.width = Val::Percent(rig.progress.clamp(0.0, 1.0) * 100.0);
     }
     for mut label in &mut labels {
-        label.0 = format!("MINING {} ({:.0} left)", deposit.kind.name(), deposit.amount);
+        label.0 = format!(
+            "MINING {} ({:.0} left)",
+            deposit.kind.name(),
+            deposit.amount
+        );
     }
 }
 

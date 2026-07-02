@@ -1,45 +1,47 @@
-//! Standalone (single-process) build of the game, used while the network
-//! client is under construction: runs the authoritative simulation and the
-//! renderer in one app, with local input feeding the ship's intent directly.
+//! The game client: renders the world, gathers input, and talks to a
+//! `space_game_server` over TCP. All gameplay simulation is server-side.
 //!
-//! This binary becomes the network client in the multiplayer pass.
+//! Usage: `space_game [server_addr] [pilot_name]`
+//!   server_addr defaults to `127.0.0.1:5123` (or `SPACE_GAME_SERVER`).
+//!   pilot_name defaults to `SPACE_GAME_NAME` or `pilot-<pid>`.
 
 use bevy::prelude::*;
 
-use space_game::components::{LocalIntent, LocalShip, MiningRig, PlayerIntent, PlayerName, SimSet};
-use space_game::components::{Hull, PlayerShip, SimPosition, SimRotation, Velocity};
 use space_game::config::{self, GameConfig};
-use space_game::logic::cargo::Cargo;
-use space_game::plugins::persistence::{PendingLoad, PersistencePlugin};
-use space_game::plugins::player::{PlayerClientPlugin, PlayerSimPlugin};
-use space_game::plugins::resources::ResourcesPlugin;
-use space_game::plugins::sim::{enter_playing, SimulationPlugin};
-use space_game::plugins::world::{NetIdAllocator, WorldClientPlugin, WorldMotionPlugin, WorldSimPlugin};
-use space_game::plugins::{camera::GameCameraPlugin, effects::EffectsPlugin, ui::UiPlugin, visuals::VisualsPlugin};
-
-const LOCAL_PLAYER_NAME: &str = "local";
+use space_game::plugins::net_client::ClientNetPlugin;
+use space_game::plugins::player::PlayerClientPlugin;
+use space_game::plugins::sim::SimulationPlugin;
+use space_game::plugins::world::{WorldClientPlugin, WorldMotionPlugin};
+use space_game::plugins::{
+    camera::GameCameraPlugin, effects::EffectsPlugin, ui::UiPlugin, visuals::VisualsPlugin,
+};
+use space_game::protocol::DEFAULT_PORT;
 
 fn main() {
+    let mut args = std::env::args().skip(1);
+    let server_addr = args
+        .next()
+        .or_else(|| std::env::var("SPACE_GAME_SERVER").ok())
+        .unwrap_or_else(|| format!("127.0.0.1:{DEFAULT_PORT}"));
+    let player_name = args
+        .next()
+        .or_else(|| std::env::var("SPACE_GAME_NAME").ok())
+        .unwrap_or_else(|| format!("pilot-{}", std::process::id()));
+
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "Space Game".into(),
+                title: format!("Space Game — {player_name}"),
                 ..default()
             }),
             ..default()
         }))
         .insert_resource(ClearColor(Color::srgb(0.02, 0.02, 0.05)))
         .insert_resource(GameConfig::load_or_default(config::CONFIG_PATH))
-        // Simulation plugins (the server side of the future split).
-        .add_plugins((
-            SimulationPlugin,
-            PlayerSimPlugin,
-            WorldSimPlugin,
-            WorldMotionPlugin,
-            ResourcesPlugin,
-            PersistencePlugin,
-        ))
-        // Client-only plugins.
+        // Shared sim infrastructure + deterministic decorative motion.
+        // No gameplay simulation here: the server is authoritative.
+        .add_plugins((SimulationPlugin, WorldMotionPlugin))
+        // Client-only presentation and input.
         .add_plugins((
             GameCameraPlugin,
             VisualsPlugin,
@@ -48,71 +50,9 @@ fn main() {
             PlayerClientPlugin,
             WorldClientPlugin,
         ))
-        .add_systems(Startup, (enter_playing, spawn_local_ship))
-        // Stand-in for the network round-trip: local intent -> ship intent.
-        .add_systems(FixedUpdate, apply_local_intent.in_set(SimSet::NetSync))
-        .run();
-}
-
-fn spawn_local_ship(
-    mut commands: Commands,
-    config: Res<GameConfig>,
-    pending: Option<Res<PendingLoad>>,
-    mut net_ids: ResMut<NetIdAllocator>,
-) {
-    let saved = pending.as_ref().and_then(|pending| {
-        pending.0.as_ref().and_then(|save| {
-            save.players
-                .iter()
-                .find(|player| player.name == LOCAL_PLAYER_NAME)
-                .map(|player| player.ship.clone())
+        .add_plugins(ClientNetPlugin {
+            server_addr,
+            player_name,
         })
-    });
-
-    let (position, rotation, velocity, hull, stats, cargo) = match saved {
-        Some(ship) => (
-            ship.position,
-            ship.rotation,
-            ship.velocity,
-            ship.hull,
-            ship.stats,
-            ship.cargo,
-        ),
-        None => {
-            let stats = config.ship.stats.clone();
-            (
-                Vec2::new(config.ship.spawn_position.0, config.ship.spawn_position.1),
-                std::f32::consts::FRAC_PI_2,
-                Vec2::ZERO,
-                stats.max_hull,
-                stats.clone(),
-                Cargo::new(stats.cargo_capacity),
-            )
-        }
-    };
-
-    commands.spawn((
-        Name::new("Player Ship"),
-        PlayerShip,
-        LocalShip,
-        PlayerName(LOCAL_PLAYER_NAME.into()),
-        net_ids.allocate(),
-        PlayerIntent::default(),
-        SimPosition::new(position),
-        SimRotation::new(rotation),
-        Velocity(velocity),
-        Hull(hull),
-        cargo,
-        MiningRig::default(),
-        stats,
-    ));
-}
-
-fn apply_local_intent(
-    local: Res<LocalIntent>,
-    mut ships: Query<&mut PlayerIntent, With<LocalShip>>,
-) {
-    for mut intent in &mut ships {
-        *intent = local.0;
-    }
+        .run();
 }

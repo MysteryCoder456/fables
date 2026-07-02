@@ -188,7 +188,13 @@ fn save_when_triggered(
         ),
         With<PlayerShip>,
     >,
-    asteroids: Query<(&SimPosition, &SimRotation, &Asteroid, &Spin, &ResourceDeposit)>,
+    asteroids: Query<(
+        &SimPosition,
+        &SimRotation,
+        &Asteroid,
+        &Spin,
+        &ResourceDeposit,
+    )>,
     planets: Query<(&Planet, &ResourceDeposit)>,
 ) {
     let auto = timer.0.tick(time.delta()).just_finished();
@@ -199,9 +205,10 @@ fn save_when_triggered(
 
     // Refresh the roster from live ships; offline entries persist as-is.
     for (name, pos, rot, vel, hull, stats, cargo) in &ships {
-        roster
-            .0
-            .insert(name.0.clone(), capture_ship(pos, rot, vel, hull, stats, cargo));
+        roster.0.insert(
+            name.0.clone(),
+            capture_ship(pos, rot, vel, hull, stats, cargo),
+        );
     }
 
     let save = SaveGame {
@@ -300,7 +307,10 @@ mod tests {
         assert_eq!(loaded.sim_elapsed, save.sim_elapsed);
         assert_eq!(loaded.players.len(), 1);
         assert_eq!(loaded.players[0].name, "ada");
-        assert_eq!(loaded.players[0].ship.position, save.players[0].ship.position);
+        assert_eq!(
+            loaded.players[0].ship.position,
+            save.players[0].ship.position
+        );
         assert_eq!(loaded.players[0].ship.cargo, save.players[0].ship.cargo);
         assert_eq!(loaded.asteroids.len(), 1);
         assert_eq!(loaded.asteroids[0].kind, ResourceType::Ice);

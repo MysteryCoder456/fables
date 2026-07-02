@@ -10,6 +10,7 @@
 
 pub mod camera;
 pub mod effects;
+pub mod net_client;
 pub mod net_server;
 pub mod persistence;
 pub mod player;
