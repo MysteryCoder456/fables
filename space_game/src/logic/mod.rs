@@ -5,5 +5,7 @@
 //! unit-tested core of the simulation and would run unchanged on a headless
 //! server.
 
+pub mod belt;
+pub mod orbit;
 pub mod parallax;
 pub mod physics;
