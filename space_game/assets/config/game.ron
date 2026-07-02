@@ -1,0 +1,118 @@
+// Data-driven game configuration.
+// Edit this file to tune ship stats, planets, orbits and asteroid belts —
+// no recompile needed. If this file is missing or invalid the game falls
+// back to identical built-in defaults.
+GameConfig(
+    ship: ShipConfig(
+        spawn_position: (0.0, -1400.0),
+        stats: ShipStats(
+            max_hull: 100.0,
+            cargo_capacity: 60,
+            mining_power: 6.0,
+            mining_range: 160.0,
+            thrust_accel: 300.0,
+            turn_speed: 3.2,
+            max_speed: 500.0,
+            drag: 0.4,
+        ),
+    ),
+    system: SolarSystemConfig(
+        name: "Helios",
+        star: StarConfig(
+            name: "Helios",
+            radius: 300.0,
+            color: (1.0, 0.85, 0.45),
+        ),
+        planets: [
+            PlanetConfig(
+                name: "Cinder",
+                radius: 55.0,
+                color: (0.85, 0.45, 0.3),
+                orbit_radius: 1200.0,
+                orbit_period: 180.0,
+                orbit_phase: 0.4,
+                deposit: Some(DepositConfig(
+                    kind: Iron,
+                    max_amount: 600.0,
+                    regen_per_sec: 0.5,
+                )),
+            ),
+            PlanetConfig(
+                name: "Verdis",
+                radius: 80.0,
+                color: (0.35, 0.7, 0.45),
+                orbit_radius: 2100.0,
+                orbit_period: 320.0,
+                orbit_phase: 2.4,
+                deposit: Some(DepositConfig(
+                    kind: Gas,
+                    max_amount: 500.0,
+                    regen_per_sec: 0.4,
+                )),
+            ),
+            PlanetConfig(
+                name: "Glacius",
+                radius: 65.0,
+                color: (0.6, 0.8, 0.95),
+                orbit_radius: 3400.0,
+                orbit_period: 540.0,
+                orbit_phase: 4.2,
+                deposit: Some(DepositConfig(
+                    kind: Ice,
+                    max_amount: 700.0,
+                    regen_per_sec: 0.6,
+                )),
+            ),
+            PlanetConfig(
+                name: "Umbra",
+                radius: 95.0,
+                color: (0.5, 0.4, 0.65),
+                orbit_radius: 5200.0,
+                orbit_period: 900.0,
+                orbit_phase: 1.1,
+                deposit: Some(DepositConfig(
+                    kind: Crystal,
+                    max_amount: 400.0,
+                    regen_per_sec: 0.25,
+                )),
+            ),
+            PlanetConfig(
+                name: "Ferrum",
+                radius: 45.0,
+                color: (0.7, 0.6, 0.5),
+                orbit_radius: 6800.0,
+                orbit_period: 1400.0,
+                orbit_phase: 5.5,
+                deposit: Some(DepositConfig(
+                    kind: Iron,
+                    max_amount: 900.0,
+                    regen_per_sec: 0.8,
+                )),
+            ),
+        ],
+        belts: [
+            BeltConfig(
+                inner_radius: 2600.0,
+                outer_radius: 3000.0,
+                asteroid_count: 90,
+                seed: 7,
+                resources: [Iron, Ice],
+                min_amount: 15.0,
+                max_amount: 50.0,
+                min_size: 14.0,
+                max_size: 34.0,
+            ),
+            BeltConfig(
+                inner_radius: 4200.0,
+                outer_radius: 4800.0,
+                asteroid_count: 130,
+                seed: 99,
+                resources: [Iron, Crystal, Gas],
+                min_amount: 25.0,
+                max_amount: 80.0,
+                min_size: 16.0,
+                max_size: 40.0,
+            ),
+        ],
+    ),
+)

@@ -1,0 +1,5 @@
+# Rust build artifacts
+space_game/target/
+
+# Local save files
+space_game/save.ron

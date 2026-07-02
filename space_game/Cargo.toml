@@ -1,0 +1,26 @@
+[package]
+name = "space_game"
+version = "0.1.0"
+edition = "2021"
+description = "A 2D space-themed, multiplayer-ready RPG built with Bevy"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# `serialize` enables serde impls for Bevy/glam types used in save files.
+bevy = { version = "0.19", features = ["serialize"] }
+serde = { version = "1", features = ["derive"] }
+ron = "0.12"
+rand = "0.8"
+
+[features]
+# Dev-only fast iteration builds: `cargo run --features dev`.
+# Never ship a release build with dynamic_linking.
+dev = ["bevy/dynamic_linking"]
+
+# Bevy is unusably slow in a plain debug build; optimize dependencies
+# while keeping fast incremental compiles for our own code.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
