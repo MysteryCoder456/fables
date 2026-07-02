@@ -5,6 +5,8 @@
 //! (`camera`, `visuals`, `ui`, the input half of `player`) are client-only.
 
 pub mod camera;
+pub mod effects;
+pub mod networking;
 pub mod persistence;
 pub mod player;
 pub mod resources;

@@ -15,9 +15,9 @@ use bevy::prelude::*;
 
 use config::GameConfig;
 use plugins::{
-    camera::GameCameraPlugin, persistence::PersistencePlugin, player::PlayerPlugin,
-    resources::ResourcesPlugin, sim::SimulationPlugin, ui::UiPlugin, visuals::VisualsPlugin,
-    world::WorldPlugin,
+    camera::GameCameraPlugin, effects::EffectsPlugin, networking::NetworkingPlugin,
+    persistence::PersistencePlugin, player::PlayerPlugin, resources::ResourcesPlugin,
+    sim::SimulationPlugin, ui::UiPlugin, visuals::VisualsPlugin, world::WorldPlugin,
 };
 
 fn main() {
@@ -38,8 +38,9 @@ fn main() {
             WorldPlugin,
             ResourcesPlugin,
             PersistencePlugin,
+            NetworkingPlugin,
         ))
         // Client-only plugins.
-        .add_plugins((GameCameraPlugin, VisualsPlugin, UiPlugin))
+        .add_plugins((GameCameraPlugin, VisualsPlugin, UiPlugin, EffectsPlugin))
         .run();
 }

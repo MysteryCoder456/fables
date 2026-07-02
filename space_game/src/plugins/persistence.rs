@@ -143,7 +143,13 @@ fn save_when_triggered(
         With<PlayerShip>,
     >,
     asteroids: Query<
-        (&SimPosition, &SimRotation, &Asteroid, &Spin, &ResourceDeposit),
+        (
+            &SimPosition,
+            &SimRotation,
+            &Asteroid,
+            &Spin,
+            &ResourceDeposit,
+        ),
         Without<PlayerShip>,
     >,
     planets: Query<(&Planet, &ResourceDeposit)>,

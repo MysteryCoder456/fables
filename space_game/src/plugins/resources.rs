@@ -44,10 +44,7 @@ pub struct DepositExhausted {
 fn mine_deposits(
     time: Res<Time>,
     intent: Res<PlayerIntent>,
-    mut ships: Query<
-        (&SimPosition, &ShipStats, &mut MiningRig, &mut Cargo),
-        With<PlayerShip>,
-    >,
+    mut ships: Query<(&SimPosition, &ShipStats, &mut MiningRig, &mut Cargo), With<PlayerShip>>,
     mut deposits: Query<(Entity, &SimPosition, &BodyRadius, &mut ResourceDeposit)>,
     mut mined_messages: MessageWriter<ResourceMined>,
 ) {
@@ -86,7 +83,10 @@ fn mine_deposits(
         rig.progress = tick.progress;
         if tick.extracted > 0 {
             let stored = cargo.add(deposit.kind, tick.extracted);
-            debug_assert_eq!(stored, tick.extracted, "mining_tick already caps at free space");
+            debug_assert_eq!(
+                stored, tick.extracted,
+                "mining_tick already caps at free space"
+            );
             deposit.amount = tick.deposit_remaining;
             mined_messages.write(ResourceMined {
                 kind: deposit.kind,

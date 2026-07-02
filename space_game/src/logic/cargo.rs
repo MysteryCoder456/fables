@@ -54,6 +54,8 @@ impl Cargo {
     }
 
     /// Remove up to `amount` units. Returns how many were actually removed.
+    /// Not called by gameplay yet: reserved for trading/refining mechanics.
+    #[allow(dead_code)]
     pub fn remove(&mut self, kind: ResourceType, amount: u32) -> u32 {
         let Some(stored) = self.contents.get_mut(&kind) else {
             return 0;
@@ -67,6 +69,8 @@ impl Cargo {
     }
 
     /// Non-empty stacks in stable (enum) order.
+    /// Not called by gameplay yet: reserved for trading/station UIs.
+    #[allow(dead_code)]
     pub fn iter(&self) -> impl Iterator<Item = (ResourceType, u32)> + '_ {
         self.contents.iter().map(|(kind, amount)| (*kind, *amount))
     }

@@ -112,7 +112,12 @@ fn ship_movement(
     time: Res<Time>,
     intent: Res<PlayerIntent>,
     mut ships: Query<
-        (&mut SimPosition, &mut SimRotation, &mut Velocity, &ShipStats),
+        (
+            &mut SimPosition,
+            &mut SimRotation,
+            &mut Velocity,
+            &ShipStats,
+        ),
         With<PlayerShip>,
     >,
 ) {
