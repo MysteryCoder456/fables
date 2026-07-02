@@ -1,5 +1,10 @@
-//! Lightweight particle effects: engine exhaust, mining beam and sparks,
+//! Lightweight particle effects: engine exhaust, mining beams and sparks,
 //! depletion bursts. Pure decoration — client-only, frame-rate independent.
+//!
+//! Everything here is multi-ship aware: remote players' ships get exhaust
+//! and mining beams from their replicated intent/rig state.
+
+use std::collections::HashMap;
 
 use bevy::prelude::*;
 use rand::Rng;
@@ -11,14 +16,14 @@ pub struct EffectsPlugin;
 
 impl Plugin for EffectsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_mining_beam).add_systems(
+        app.add_systems(
             Update,
             (
                 spawn_thrust_particles,
                 spawn_mining_sparks,
                 sparkle_on_intake,
                 burst_on_exhausted,
-                update_mining_beam,
+                update_mining_beams,
                 update_particles,
             )
                 .in_set(RenderSet::Decor),
@@ -36,8 +41,9 @@ struct Particle {
     lifetime: Timer,
 }
 
+/// The mining beam belonging to one ship.
 #[derive(Component)]
-struct MiningBeam;
+struct BeamOf(Entity);
 
 fn spawn_particle(
     commands: &mut Commands,
@@ -57,79 +63,76 @@ fn spawn_particle(
     ));
 }
 
-/// Engine exhaust while thrusting.
+/// Engine exhaust behind every thrusting ship (local or remote).
 fn spawn_thrust_particles(
     mut commands: Commands,
     time: Res<Time>,
-    intent: Res<PlayerIntent>,
-    ships: Query<&Transform, With<PlayerShip>>,
+    ships: Query<(&Transform, &PlayerIntent), With<PlayerShip>>,
 ) {
-    if intent.thrust <= 0.0 {
-        return;
-    }
-    let Ok(ship) = ships.single() else {
-        return;
-    };
     let mut rng = rand::thread_rng();
-    let forward = (ship.rotation * Vec3::X).truncate();
-    let rear = ship.translation.truncate() - forward * 14.0;
+    for (ship, intent) in &ships {
+        if intent.thrust <= 0.0 {
+            continue;
+        }
+        let forward = (ship.rotation * Vec3::X).truncate();
+        let rear = ship.translation.truncate() - forward * 14.0;
 
-    // Emission rate ~120 particles/sec regardless of frame rate.
-    let count = (time.delta_secs() * 120.0).ceil() as u32;
-    for _ in 0..count.min(8) {
-        let jitter = Vec2::new(rng.gen_range(-1.0..1.0), rng.gen_range(-1.0..1.0)) * 30.0;
-        let color = Color::srgba(1.0, rng.gen_range(0.5..0.8), 0.2, 0.9);
-        spawn_particle(
-            &mut commands,
-            rear + jitter * 0.1,
-            -forward * rng.gen_range(120.0..220.0) + jitter,
-            color,
-            rng.gen_range(2.0..4.5),
-            rng.gen_range(0.25..0.5),
-        );
+        // Emission rate ~120 particles/sec regardless of frame rate.
+        let count = (time.delta_secs() * 120.0).ceil() as u32;
+        for _ in 0..count.min(8) {
+            let jitter = Vec2::new(rng.gen_range(-1.0..1.0), rng.gen_range(-1.0..1.0)) * 30.0;
+            let color = Color::srgba(1.0, rng.gen_range(0.5..0.8), 0.2, 0.9);
+            spawn_particle(
+                &mut commands,
+                rear + jitter * 0.1,
+                -forward * rng.gen_range(120.0..220.0) + jitter,
+                color,
+                rng.gen_range(2.0..4.5),
+                rng.gen_range(0.25..0.5),
+            );
+        }
     }
 }
 
-/// Sparks drifting from the mined deposit toward the ship.
+/// Sparks drifting from each mined deposit toward the mining ship.
 fn spawn_mining_sparks(
     mut commands: Commands,
     time: Res<Time>,
     ships: Query<(&SimPosition, &MiningRig), With<PlayerShip>>,
     deposits: Query<(&SimPosition, &crate::components::ResourceDeposit)>,
 ) {
-    let Ok((ship_pos, rig)) = ships.single() else {
-        return;
-    };
-    let Some((deposit_pos, deposit)) = rig.target.and_then(|e| deposits.get(e).ok()) else {
-        return;
-    };
     let mut rng = rand::thread_rng();
-    let count = (time.delta_secs() * 40.0).ceil() as u32;
-    let toward_ship = (ship_pos.current - deposit_pos.current).normalize_or_zero();
-    for _ in 0..count.min(4) {
-        let jitter = Vec2::new(rng.gen_range(-1.0..1.0), rng.gen_range(-1.0..1.0)) * 12.0;
-        spawn_particle(
-            &mut commands,
-            deposit_pos.current + jitter,
-            toward_ship * rng.gen_range(60.0..140.0) + jitter * 2.0,
-            deposit.kind.color(),
-            rng.gen_range(1.5..3.0),
-            rng.gen_range(0.4..0.8),
-        );
+    for (ship_pos, rig) in &ships {
+        let Some((deposit_pos, deposit)) = rig.target.and_then(|e| deposits.get(e).ok()) else {
+            continue;
+        };
+        let count = (time.delta_secs() * 40.0).ceil() as u32;
+        let toward_ship = (ship_pos.current - deposit_pos.current).normalize_or_zero();
+        for _ in 0..count.min(4) {
+            let jitter = Vec2::new(rng.gen_range(-1.0..1.0), rng.gen_range(-1.0..1.0)) * 12.0;
+            spawn_particle(
+                &mut commands,
+                deposit_pos.current + jitter,
+                toward_ship * rng.gen_range(60.0..140.0) + jitter * 2.0,
+                deposit.kind.color(),
+                rng.gen_range(1.5..3.0),
+                rng.gen_range(0.4..0.8),
+            );
+        }
     }
 }
 
-/// A small ring of sparkles around the ship when units land in the hold.
+/// A small ring of sparkles around a ship when units land in its hold.
 fn sparkle_on_intake(
     mut commands: Commands,
     mut messages: MessageReader<ResourceMined>,
     ships: Query<&SimPosition, With<PlayerShip>>,
 ) {
-    let Ok(ship) = ships.single() else {
-        return;
-    };
     let mut rng = rand::thread_rng();
     for message in messages.read() {
+        let Ok(ship) = ships.get(message.ship) else {
+            continue;
+        };
         for _ in 0..(message.amount * 3).min(9) {
             let dir = Vec2::from_angle(rng.gen_range(0.0..std::f32::consts::TAU));
             spawn_particle(
@@ -182,50 +185,62 @@ fn update_particles(
 }
 
 // ---------------------------------------------------------------------------
-// Mining beam
+// Mining beams (one per actively mining ship)
 // ---------------------------------------------------------------------------
 
-fn spawn_mining_beam(mut commands: Commands) {
-    commands.spawn((
-        Name::new("Mining Beam"),
-        MiningBeam,
-        Sprite::from_color(Color::srgba(1.0, 0.9, 0.4, 0.5), Vec2::new(1.0, 2.0)),
-        Transform::from_xyz(0.0, 0.0, BEAM_Z),
-        Visibility::Hidden,
-    ));
-}
-
-/// Stretch a thin sprite between ship and target while mining.
-fn update_mining_beam(
+/// Keep exactly one beam sprite per ship, stretched to its mining target.
+fn update_mining_beams(
+    mut commands: Commands,
     time: Res<Time>,
-    ships: Query<(&Transform, &MiningRig), (With<PlayerShip>, Without<MiningBeam>)>,
-    deposits: Query<&Transform, (Without<PlayerShip>, Without<MiningBeam>)>,
-    mut beams: Query<(&mut Transform, &mut Sprite, &mut Visibility), With<MiningBeam>>,
+    ships: Query<(Entity, &Transform, &MiningRig), With<PlayerShip>>,
+    targets: Query<&Transform, Without<BeamOf>>,
+    mut beams: Query<
+        (Entity, &BeamOf, &mut Transform, &mut Sprite, &mut Visibility),
+        Without<PlayerShip>,
+    >,
 ) {
-    let Ok((mut beam_transform, mut sprite, mut visibility)) = beams.single_mut() else {
-        return;
-    };
-    let target = ships.single().ok().and_then(|(ship, rig)| {
-        rig.target
-            .and_then(|e| deposits.get(e).ok().map(|t| (ship, t)))
-    });
+    let mut beams_by_ship: HashMap<Entity, _> = HashMap::new();
+    for (beam_entity, owner, transform, sprite, visibility) in &mut beams {
+        beams_by_ship.insert(owner.0, (beam_entity, transform, sprite, visibility));
+    }
 
-    let Some((ship, deposit)) = target else {
-        *visibility = Visibility::Hidden;
-        return;
-    };
-    *visibility = Visibility::Visible;
+    for (ship_entity, ship_transform, rig) in &ships {
+        let Some((_, mut beam_transform, mut sprite, mut visibility)) =
+            beams_by_ship.remove(&ship_entity)
+        else {
+            commands.spawn((
+                Name::new("Mining Beam"),
+                BeamOf(ship_entity),
+                Sprite::from_color(Color::srgba(1.0, 0.9, 0.4, 0.5), Vec2::new(1.0, 2.0)),
+                Transform::from_xyz(0.0, 0.0, BEAM_Z),
+                Visibility::Hidden,
+            ));
+            continue;
+        };
 
-    let from = ship.translation.truncate();
-    let to = deposit.translation.truncate();
-    let delta = to - from;
-    let midpoint = from + delta / 2.0;
+        let target = rig.target.and_then(|e| targets.get(e).ok());
+        let Some(deposit) = target else {
+            *visibility = Visibility::Hidden;
+            continue;
+        };
+        *visibility = Visibility::Visible;
 
-    beam_transform.translation.x = midpoint.x;
-    beam_transform.translation.y = midpoint.y;
-    beam_transform.rotation = Quat::from_rotation_z(delta.to_angle());
-    sprite.custom_size = Some(Vec2::new(delta.length(), 2.0));
-    // Subtle pulse so the beam reads as active.
-    let pulse = 0.4 + 0.2 * (time.elapsed_secs() * 10.0).sin();
-    sprite.color.set_alpha(pulse);
+        let from = ship_transform.translation.truncate();
+        let to = deposit.translation.truncate();
+        let delta = to - from;
+        let midpoint = from + delta / 2.0;
+
+        beam_transform.translation.x = midpoint.x;
+        beam_transform.translation.y = midpoint.y;
+        beam_transform.rotation = Quat::from_rotation_z(delta.to_angle());
+        sprite.custom_size = Some(Vec2::new(delta.length(), 2.0));
+        // Subtle pulse so the beam reads as active.
+        let pulse = 0.4 + 0.2 * (time.elapsed_secs() * 10.0).sin();
+        sprite.color.set_alpha(pulse);
+    }
+
+    // Beams whose ship despawned (player left).
+    for (beam_entity, ..) in beams_by_ship.into_values() {
+        commands.entity(beam_entity).despawn();
+    }
 }

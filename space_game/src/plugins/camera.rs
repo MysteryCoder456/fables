@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 
-use crate::components::{PlayerShip, RenderSet};
+use crate::components::{LocalShip, RenderSet};
 
 pub struct GameCameraPlugin;
 
@@ -34,7 +34,7 @@ fn spawn_camera(mut commands: Commands) {
 
 fn follow_player(
     time: Res<Time>,
-    ships: Query<&Transform, (With<PlayerShip>, Without<MainCamera>)>,
+    ships: Query<&Transform, (With<LocalShip>, Without<MainCamera>)>,
     mut cameras: Query<&mut Transform, With<MainCamera>>,
 ) {
     let Ok(ship) = ships.single() else {

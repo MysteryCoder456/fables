@@ -1,128 +1,50 @@
-//! Player ship: intent gathering (client) and thrust physics (simulation).
+//! Player ships, split along the client/server seam:
+//!
+//! - [`PlayerSimPlugin`] (server): integrates thrust physics for every ship
+//!   from its per-ship [`PlayerIntent`] component. Ship *spawning* happens in
+//!   the server network plugin when a client joins.
+//! - [`PlayerClientPlugin`] (client): gathers keyboard input into
+//!   [`LocalIntent`] (sent to the server by the network plugin) and attaches
+//!   render meshes to replicated ship entities.
 
 use bevy::prelude::*;
 
 use crate::components::{
-    Hull, MiningRig, PlayerIntent, PlayerShip, ShipStats, SimPosition, SimRotation, SimSet,
+    LocalIntent, LocalShip, PlayerIntent, PlayerShip, ShipStats, SimPosition, SimRotation, SimSet,
     Velocity,
 };
-use crate::config::GameConfig;
-use crate::logic::cargo::Cargo;
 use crate::logic::physics::{step_ship, ShipKinematics, ThrustParams};
-use crate::plugins::persistence::PendingLoad;
 
-pub struct PlayerPlugin;
-
-impl Plugin for PlayerPlugin {
-    fn build(&self, app: &mut App) {
-        app.init_resource::<PlayerIntent>()
-            .add_systems(Startup, spawn_player)
-            // Client-side: raw device input -> intent. On a networked client
-            // this same intent struct would be sent to the server each tick.
-            .add_systems(Update, gather_input)
-            // Simulation: consumes intent, never reads input devices.
-            .add_systems(FixedUpdate, ship_movement.in_set(SimSet::Movement));
-    }
-}
-
-/// Z layer for the ship sprite (above planets and asteroids).
+/// Z layer for ship meshes (above planets and asteroids).
 pub const SHIP_Z: f32 = 10.0;
 
-fn spawn_player(
-    mut commands: Commands,
-    config: Res<GameConfig>,
-    pending: Option<Res<PendingLoad>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-) {
-    // Restore the saved ship if one exists, otherwise start from config.
-    let saved = pending
-        .as_ref()
-        .and_then(|pending| pending.0.as_ref())
-        .map(|save| &save.ship);
+// ---------------------------------------------------------------------------
+// Simulation half (server)
+// ---------------------------------------------------------------------------
 
-    let (position, rotation, velocity, hull, stats, cargo) = match saved {
-        Some(ship) => (
-            ship.position,
-            ship.rotation,
-            ship.velocity,
-            ship.hull,
-            ship.stats.clone(),
-            ship.cargo.clone(),
-        ),
-        None => {
-            let stats = config.ship.stats.clone();
-            (
-                Vec2::new(config.ship.spawn_position.0, config.ship.spawn_position.1),
-                std::f32::consts::FRAC_PI_2,
-                Vec2::ZERO,
-                stats.max_hull,
-                stats.clone(),
-                Cargo::new(stats.cargo_capacity),
-            )
-        }
-    };
+pub struct PlayerSimPlugin;
 
-    // Nose points +X at rotation 0, matching the physics convention.
-    let hull_mesh = meshes.add(Triangle2d::new(
-        Vec2::new(18.0, 0.0),
-        Vec2::new(-12.0, 10.0),
-        Vec2::new(-12.0, -10.0),
-    ));
-
-    commands.spawn((
-        Name::new("Player Ship"),
-        PlayerShip,
-        SimPosition::new(position),
-        SimRotation::new(rotation),
-        Velocity(velocity),
-        Hull(hull),
-        cargo,
-        MiningRig::default(),
-        stats,
-        Mesh2d(hull_mesh),
-        MeshMaterial2d(materials.add(Color::srgb(0.85, 0.95, 1.0))),
-        Transform::from_translation(position.extend(SHIP_Z)),
-    ));
-}
-
-fn gather_input(keys: Res<ButtonInput<KeyCode>>, mut intent: ResMut<PlayerIntent>) {
-    let pressed = |a: KeyCode, b: KeyCode| keys.pressed(a) || keys.pressed(b);
-
-    intent.thrust = if pressed(KeyCode::KeyW, KeyCode::ArrowUp) {
-        1.0
-    } else {
-        0.0
-    };
-
-    let mut turn = 0.0;
-    if pressed(KeyCode::KeyA, KeyCode::ArrowLeft) {
-        turn += 1.0;
+impl Plugin for PlayerSimPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(FixedUpdate, ship_movement.in_set(SimSet::Movement));
     }
-    if pressed(KeyCode::KeyD, KeyCode::ArrowRight) {
-        turn -= 1.0;
-    }
-    intent.turn = turn;
-
-    intent.brake = pressed(KeyCode::KeyS, KeyCode::ArrowDown);
-    intent.mine = keys.pressed(KeyCode::Space);
 }
 
 fn ship_movement(
     time: Res<Time>,
-    intent: Res<PlayerIntent>,
     mut ships: Query<
         (
             &mut SimPosition,
             &mut SimRotation,
             &mut Velocity,
             &ShipStats,
+            &PlayerIntent,
         ),
         With<PlayerShip>,
     >,
 ) {
     let dt = time.delta_secs();
-    for (mut pos, mut rot, mut vel, stats) in &mut ships {
+    for (mut pos, mut rot, mut vel, stats, intent) in &mut ships {
         let mut kin = ShipKinematics {
             position: pos.current,
             rotation: rot.current,
@@ -145,5 +67,69 @@ fn ship_movement(
         pos.current = kin.position;
         rot.current = kin.rotation;
         vel.0 = kin.velocity;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Client half
+// ---------------------------------------------------------------------------
+
+pub struct PlayerClientPlugin;
+
+impl Plugin for PlayerClientPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<LocalIntent>()
+            .add_systems(Update, (gather_input, attach_ship_visuals));
+    }
+}
+
+fn gather_input(keys: Res<ButtonInput<KeyCode>>, mut local: ResMut<LocalIntent>) {
+    let pressed = |a: KeyCode, b: KeyCode| keys.pressed(a) || keys.pressed(b);
+    let intent = &mut local.0;
+
+    intent.thrust = if pressed(KeyCode::KeyW, KeyCode::ArrowUp) {
+        1.0
+    } else {
+        0.0
+    };
+
+    let mut turn = 0.0;
+    if pressed(KeyCode::KeyA, KeyCode::ArrowLeft) {
+        turn += 1.0;
+    }
+    if pressed(KeyCode::KeyD, KeyCode::ArrowRight) {
+        turn -= 1.0;
+    }
+    intent.turn = turn;
+
+    intent.brake = pressed(KeyCode::KeyS, KeyCode::ArrowDown);
+    intent.mine = keys.pressed(KeyCode::Space);
+}
+
+/// Give freshly spawned/replicated ship entities a render mesh. The local
+/// ship is ice-white; other players' ships are amber so they read instantly.
+fn attach_ship_visuals(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    ships: Query<(Entity, &SimPosition, Has<LocalShip>), (With<PlayerShip>, Without<Mesh2d>)>,
+) {
+    for (entity, pos, is_local) in &ships {
+        // Nose points +X at rotation 0, matching the physics convention.
+        let hull_mesh = meshes.add(Triangle2d::new(
+            Vec2::new(18.0, 0.0),
+            Vec2::new(-12.0, 10.0),
+            Vec2::new(-12.0, -10.0),
+        ));
+        let color = if is_local {
+            Color::srgb(0.85, 0.95, 1.0)
+        } else {
+            Color::srgb(1.0, 0.75, 0.4)
+        };
+        commands.entity(entity).insert((
+            Mesh2d(hull_mesh),
+            MeshMaterial2d(materials.add(color)),
+            Transform::from_translation(pos.current.extend(SHIP_Z)),
+        ));
     }
 }

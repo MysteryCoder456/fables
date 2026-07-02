@@ -1,12 +1,15 @@
-//! Bevy plugins, one per major system.
+//! Bevy plugins, one per major system, split along the client/server seam.
 //!
-//! Simulation plugins (`sim`, plus the `FixedUpdate` halves of `player`,
-//! `world`, `resources`) are what a headless server would run; the rest
-//! (`camera`, `visuals`, `ui`, the input half of `player`) are client-only.
+//! Server (headless, authoritative): `sim`, `player::PlayerSimPlugin`,
+//! `world::{WorldSimPlugin, WorldMotionPlugin}`, `resources`, `persistence`,
+//! `net_server`.
+//!
+//! Client (render + input): `sim`, `world::{WorldMotionPlugin,
+//! WorldClientPlugin}`, `player::PlayerClientPlugin`, `camera`, `visuals`,
+//! `ui`, `effects`, `net_client`.
 
 pub mod camera;
 pub mod effects;
-pub mod networking;
 pub mod persistence;
 pub mod player;
 pub mod resources;

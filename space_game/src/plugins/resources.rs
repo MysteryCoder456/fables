@@ -4,8 +4,8 @@
 use bevy::prelude::*;
 
 use crate::components::{
-    BodyRadius, MiningRig, PlayerIntent, PlayerShip, ResourceDeposit, ShipStats, SimPosition,
-    SimSet,
+    BodyRadius, MiningRig, NetId, PlayerIntent, PlayerShip, ResourceDeposit, ShipStats,
+    SimPosition, SimSet,
 };
 use crate::logic::cargo::Cargo;
 use crate::logic::mining::{mining_tick, regen_tick};
@@ -26,16 +26,20 @@ impl Plugin for ResourcesPlugin {
     }
 }
 
-/// Sent whenever units land in a cargo hold (drives HUD/particle feedback).
+/// Sent whenever units land in a cargo hold (drives particle feedback and
+/// snapshot events). On the client this is re-emitted from server snapshots.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ResourceMined {
+    pub ship: Entity,
     pub kind: ResourceType,
     pub amount: u32,
 }
 
-/// Sent when an asteroid runs dry and despawns.
+/// Sent when an asteroid runs dry and despawns. Carries the [`NetId`] so the
+/// server can tell clients which entity to remove.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct DepositExhausted {
+    pub net_id: NetId,
     pub position: Vec2,
     pub kind: ResourceType,
 }
@@ -43,14 +47,23 @@ pub struct DepositExhausted {
 /// Acquire a target and extract resources while the mine intent is held.
 fn mine_deposits(
     time: Res<Time>,
-    intent: Res<PlayerIntent>,
-    mut ships: Query<(&SimPosition, &ShipStats, &mut MiningRig, &mut Cargo), With<PlayerShip>>,
+    mut ships: Query<
+        (
+            Entity,
+            &SimPosition,
+            &ShipStats,
+            &PlayerIntent,
+            &mut MiningRig,
+            &mut Cargo,
+        ),
+        With<PlayerShip>,
+    >,
     mut deposits: Query<(Entity, &SimPosition, &BodyRadius, &mut ResourceDeposit)>,
     mut mined_messages: MessageWriter<ResourceMined>,
 ) {
     let dt = time.delta_secs();
 
-    for (ship_pos, stats, mut rig, mut cargo) in &mut ships {
+    for (ship_entity, ship_pos, stats, intent, mut rig, mut cargo) in &mut ships {
         if !intent.mine {
             rig.target = None;
             rig.progress = 0.0;
@@ -89,6 +102,7 @@ fn mine_deposits(
             );
             deposit.amount = tick.deposit_remaining;
             mined_messages.write(ResourceMined {
+                ship: ship_entity,
                 kind: deposit.kind,
                 amount: stored,
             });
@@ -129,12 +143,13 @@ fn find_target(
 /// Remove asteroids whose deposit ran dry (planets regenerate instead).
 fn deplete_asteroids(
     mut commands: Commands,
-    deposits: Query<(Entity, &SimPosition, &ResourceDeposit)>,
+    deposits: Query<(Entity, &NetId, &SimPosition, &ResourceDeposit)>,
     mut exhausted_messages: MessageWriter<DepositExhausted>,
 ) {
-    for (entity, pos, deposit) in &deposits {
+    for (entity, net_id, pos, deposit) in &deposits {
         if deposit.is_exhausted() {
             exhausted_messages.write(DepositExhausted {
+                net_id: *net_id,
                 position: pos.current,
                 kind: deposit.kind,
             });

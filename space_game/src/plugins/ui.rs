@@ -1,11 +1,14 @@
-//! Screen-space HUD: hull, speed, cargo manifest, mining progress and the
-//! pause overlay. Client-only; reads simulation state, never writes it.
+//! Screen-space HUD: hull, speed, cargo manifest, mining progress, minimap
+//! and the connection overlay. Client-only; reads simulation state, never
+//! writes it. All "my ship" panels read the entity tagged [`LocalShip`].
+
+use std::collections::HashMap;
 
 use bevy::prelude::*;
 
 use crate::components::{
-    CentralStar, GameState, Hull, MiningRig, Planet, PlayerShip, RenderSet, ResourceDeposit,
-    ShipStats, SimPosition, Velocity,
+    CentralStar, GameState, Hull, LocalShip, MiningRig, Planet, PlayerShip, RenderSet,
+    ResourceDeposit, ShipStats, SimPosition, Velocity,
 };
 use crate::config::GameConfig;
 use crate::logic::cargo::Cargo;
@@ -15,9 +18,7 @@ pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_hud)
-            // PostStartup: minimap dots reference world entities spawned in Startup.
-            .add_systems(PostStartup, spawn_minimap)
+        app.add_systems(Startup, (spawn_hud, spawn_minimap))
             .add_systems(
                 Update,
                 (
@@ -25,12 +26,12 @@ impl Plugin for UiPlugin {
                     update_speed_text,
                     update_cargo_text,
                     update_mining_bar,
+                    ensure_minimap_dots,
                     update_minimap,
                 )
                     .in_set(RenderSet::Decor),
             )
-            .add_systems(OnEnter(GameState::Paused), show_pause_overlay)
-            .add_systems(OnExit(GameState::Paused), hide_pause_overlay);
+            .add_systems(OnEnter(GameState::Playing), hide_connecting_overlay);
     }
 }
 
@@ -47,7 +48,7 @@ struct MiningBarFill;
 #[derive(Component)]
 struct MiningLabel;
 #[derive(Component)]
-struct PauseOverlay;
+struct ConnectingOverlay;
 
 const PANEL_BG: Color = Color::srgba(0.05, 0.08, 0.12, 0.75);
 const BAR_BG: Color = Color::srgba(0.15, 0.18, 0.22, 0.9);
@@ -181,11 +182,11 @@ fn spawn_hud(mut commands: Commands) {
             });
         });
 
-    // --- Center: pause overlay ---
+    // --- Center: connection overlay (shown until the server welcomes us) ---
     commands.spawn((
-        Name::new("HUD Pause Overlay"),
-        PauseOverlay,
-        Text::new("PAUSED - press P to resume"),
+        Name::new("HUD Connecting Overlay"),
+        ConnectingOverlay,
+        Text::new("CONNECTING TO SERVER..."),
         TextFont {
             font_size: FontSize::Px(28.0),
             ..default()
@@ -195,15 +196,23 @@ fn spawn_hud(mut commands: Commands) {
             position_type: PositionType::Absolute,
             top: Val::Percent(45.0),
             left: Val::Percent(50.0),
-            margin: UiRect::left(Val::Px(-220.0)),
+            margin: UiRect::left(Val::Px(-200.0)),
             ..default()
         },
-        Visibility::Hidden,
     ));
 }
 
+fn hide_connecting_overlay(
+    mut commands: Commands,
+    overlays: Query<Entity, With<ConnectingOverlay>>,
+) {
+    for entity in &overlays {
+        commands.entity(entity).despawn();
+    }
+}
+
 fn update_hull_bar(
-    ships: Query<(&Hull, &ShipStats), With<PlayerShip>>,
+    ships: Query<(&Hull, &ShipStats), With<LocalShip>>,
     mut fills: Query<(&mut Node, &mut BackgroundColor), With<HullBarFill>>,
 ) {
     let Ok((hull, stats)) = ships.single() else {
@@ -218,7 +227,7 @@ fn update_hull_bar(
 }
 
 fn update_speed_text(
-    ships: Query<&Velocity, With<PlayerShip>>,
+    ships: Query<&Velocity, With<LocalShip>>,
     mut texts: Query<&mut Text, With<SpeedText>>,
 ) {
     let Ok(velocity) = ships.single() else {
@@ -230,7 +239,7 @@ fn update_speed_text(
 }
 
 fn update_cargo_text(
-    ships: Query<&Cargo, With<PlayerShip>>,
+    ships: Query<&Cargo, With<LocalShip>>,
     mut texts: Query<&mut Text, With<CargoText>>,
 ) {
     let Ok(cargo) = ships.single() else {
@@ -250,7 +259,7 @@ fn update_cargo_text(
 }
 
 fn update_mining_bar(
-    ships: Query<&MiningRig, With<PlayerShip>>,
+    ships: Query<&MiningRig, With<LocalShip>>,
     deposits: Query<&ResourceDeposit>,
     mut bars: Query<&mut Visibility, With<MiningBar>>,
     mut fills: Query<&mut Node, With<MiningBarFill>>,
@@ -275,11 +284,7 @@ fn update_mining_bar(
         node.width = Val::Percent(rig.progress.clamp(0.0, 1.0) * 100.0);
     }
     for mut label in &mut labels {
-        label.0 = format!(
-            "MINING {} ({:.0} left)",
-            deposit.kind.name(),
-            deposit.amount
-        );
+        label.0 = format!("MINING {} ({:.0} left)", deposit.kind.name(), deposit.amount);
     }
 }
 
@@ -296,17 +301,15 @@ struct MinimapDot {
     dot_size: f32,
 }
 
+/// The map box entity dots get parented to.
+#[derive(Resource)]
+struct MinimapBox(Entity);
+
 /// World units from the star that map to the minimap edge.
 #[derive(Resource)]
 struct MinimapExtent(f32);
 
-fn spawn_minimap(
-    mut commands: Commands,
-    config: Res<GameConfig>,
-    stars: Query<Entity, With<CentralStar>>,
-    planets: Query<(Entity, &Planet)>,
-    ships: Query<Entity, With<PlayerShip>>,
-) {
+fn spawn_minimap(mut commands: Commands, config: Res<GameConfig>) {
     // Everything of interest must fit: widest orbit or outermost belt.
     let system = &config.system;
     let extent = system
@@ -332,40 +335,7 @@ fn spawn_minimap(
             BackgroundColor(PANEL_BG),
         ))
         .id();
-
-    let mut spawn_dot = |target: Entity, size: f32, color: Color| {
-        commands.spawn((
-            MinimapDot {
-                target,
-                dot_size: size,
-            },
-            Node {
-                position_type: PositionType::Absolute,
-                width: Val::Px(size),
-                height: Val::Px(size),
-                ..default()
-            },
-            BackgroundColor(color),
-            ChildOf(map_box),
-        ));
-    };
-
-    for star in &stars {
-        let color = system.star.color;
-        spawn_dot(star, 7.0, Color::srgb(color.0, color.1, color.2));
-    }
-    for (entity, planet) in &planets {
-        if let Some(cfg) = system.planets.get(planet.config_index) {
-            spawn_dot(
-                entity,
-                4.0,
-                Color::srgb(cfg.color.0, cfg.color.1, cfg.color.2),
-            );
-        }
-    }
-    for ship in &ships {
-        spawn_dot(ship, 3.0, Color::WHITE);
-    }
+    commands.insert_resource(MinimapBox(map_box));
 
     // Resource color legend below the map.
     commands
@@ -414,6 +384,76 @@ fn spawn_minimap(
         });
 }
 
+/// Keep one dot per tracked world entity. Ships come and go at runtime
+/// (players joining/leaving), so dots are managed continuously rather than
+/// spawned once at startup.
+fn ensure_minimap_dots(
+    mut commands: Commands,
+    config: Res<GameConfig>,
+    map_box: Option<Res<MinimapBox>>,
+    tracked: Query<
+        (
+            Entity,
+            Option<&Planet>,
+            Has<CentralStar>,
+            Has<PlayerShip>,
+            Has<LocalShip>,
+        ),
+        Or<(With<Planet>, With<CentralStar>, With<PlayerShip>)>,
+    >,
+    dots: Query<(Entity, &MinimapDot)>,
+) {
+    let Some(map_box) = map_box else {
+        return;
+    };
+    let mut dots_by_target: HashMap<Entity, Entity> = HashMap::new();
+    for (dot_entity, dot) in &dots {
+        dots_by_target.insert(dot.target, dot_entity);
+    }
+
+    for (entity, planet, is_star, is_ship, is_local) in &tracked {
+        if dots_by_target.remove(&entity).is_some() {
+            continue;
+        }
+        let (size, color) = if is_star {
+            let c = config.system.star.color;
+            (7.0, Color::srgb(c.0, c.1, c.2))
+        } else if let Some(planet) = planet {
+            let Some(cfg) = config.system.planets.get(planet.config_index) else {
+                continue;
+            };
+            (4.0, Color::srgb(cfg.color.0, cfg.color.1, cfg.color.2))
+        } else if is_ship {
+            if is_local {
+                (3.0, Color::WHITE)
+            } else {
+                (3.0, Color::srgb(1.0, 0.75, 0.4))
+            }
+        } else {
+            continue;
+        };
+        commands.spawn((
+            MinimapDot {
+                target: entity,
+                dot_size: size,
+            },
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Px(size),
+                height: Val::Px(size),
+                ..default()
+            },
+            BackgroundColor(color),
+            ChildOf(map_box.0),
+        ));
+    }
+
+    // Dots whose entity despawned (player left, etc).
+    for dot_entity in dots_by_target.into_values() {
+        commands.entity(dot_entity).despawn();
+    }
+}
+
 fn update_minimap(
     extent: Option<Res<MinimapExtent>>,
     positions: Query<&SimPosition>,
@@ -423,7 +463,6 @@ fn update_minimap(
         return;
     };
     for (dot, mut node, mut visibility) in &mut dots {
-        // Hide markers whose entity is gone (e.g. a despawned target).
         let Ok(pos) = positions.get(dot.target) else {
             *visibility = Visibility::Hidden;
             continue;
@@ -434,17 +473,5 @@ fn update_minimap(
         node.left = Val::Px((normalized.x.clamp(0.0, 1.0) * range).round());
         // World +Y is up; UI +Y is down.
         node.top = Val::Px(((1.0 - normalized.y.clamp(0.0, 1.0)) * range).round());
-    }
-}
-
-fn show_pause_overlay(mut overlays: Query<&mut Visibility, With<PauseOverlay>>) {
-    for mut visibility in &mut overlays {
-        *visibility = Visibility::Visible;
-    }
-}
-
-fn hide_pause_overlay(mut overlays: Query<&mut Visibility, With<PauseOverlay>>) {
-    for mut visibility in &mut overlays {
-        *visibility = Visibility::Hidden;
     }
 }

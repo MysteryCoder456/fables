@@ -12,11 +12,14 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 
 /// Top-level game state. Simulation systems only run while `Playing`.
+///
+/// The client starts in `Connecting` and enters `Playing` when the server's
+/// `Welcome` arrives; the server (and its world) enters `Playing` at startup.
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum GameState {
     #[default]
+    Connecting,
     Playing,
-    Paused,
 }
 
 /// Fixed-timestep simulation phases. Everything gameplay-related runs in
@@ -26,10 +29,16 @@ pub enum GameState {
 pub enum SimSet {
     /// Copy `current -> previous` on all interpolated state.
     CachePrevious,
+    /// Network ingress: server applies client intents, client applies
+    /// server snapshots. Runs before any local simulation this tick.
+    NetSync,
     /// Integrate ship physics and orbital motion.
     Movement,
     /// Mining, cargo transfer, depletion and regeneration.
     Mining,
+    /// Network egress: server broadcasts the post-simulation snapshot,
+    /// client sends its intent for the next tick.
+    PostSim,
 }
 
 /// Render-side phases in `Update`. These never mutate simulation state.
@@ -101,15 +110,29 @@ pub struct Velocity(pub Vec2);
 // Player ship
 // ---------------------------------------------------------------------------
 
-/// Marker for the locally controlled ship. In a networked build every
-/// connected player gets one ship entity; only the local one carries input.
+/// Marker for any player's ship (local or remote). Every connected player
+/// owns exactly one.
 #[derive(Component, Debug)]
 pub struct PlayerShip;
+
+/// Marker for the ship controlled by *this* process (client-side only).
+/// HUD and camera follow this one; there is at most one per app.
+#[derive(Component, Debug)]
+pub struct LocalShip;
+
+/// The player's chosen pilot name; persistence and reconnection key on it.
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerName(pub String);
+
+/// Stable network identity shared between server and clients. Entity ids
+/// are process-local, so all replication references use `NetId` instead.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct NetId(pub u64);
 
 /// Data-driven ship statistics (loaded from `assets/config/game.ron`).
 /// Kept as a component so upgrades can later modify a single ship without
 /// touching global config.
-#[derive(Component, Debug, Clone, Serialize, Deserialize)]
+#[derive(Component, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ShipStats {
     pub max_hull: f32,
     pub cargo_capacity: u32,
@@ -211,10 +234,10 @@ pub struct MiningRig {
 }
 
 /// Player input expressed as *intent*, decoupled from raw key events.
-/// This is exactly the message shape a client would send to a server each
-/// tick, which is why simulation systems consume this instead of reading
-/// `ButtonInput` directly.
-#[derive(Resource, Debug, Default, Clone, Copy, Serialize, Deserialize)]
+/// This is exactly the message a client sends to the server each tick.
+/// It lives as a component on each ship: the server writes it from the
+/// owning client's messages, and simulation systems consume it per-ship.
+#[derive(Component, Debug, Default, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PlayerIntent {
     /// 0..=1 forward throttle.
     pub thrust: f32,
@@ -225,3 +248,8 @@ pub struct PlayerIntent {
     /// Mining beam engaged.
     pub mine: bool,
 }
+
+/// The intent gathered from this process's keyboard, before it goes to the
+/// server. Client-side only.
+#[derive(Resource, Debug, Default, Clone, Copy)]
+pub struct LocalIntent(pub PlayerIntent);
