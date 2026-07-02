@@ -17,11 +17,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::components::{NetId, PlayerIntent, ShipStats};
 use crate::logic::cargo::Cargo;
+use crate::logic::economy::{UpgradeKind, Upgrades};
 use crate::resource_types::ResourceType;
 
 /// Bumped on any incompatible message change; mismatched clients are
 /// rejected at `Hello` time.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Default TCP port; override with CLI args on both binaries.
 pub const DEFAULT_PORT: u16 = 5123;
@@ -41,6 +42,19 @@ pub enum ClientToServer {
     Hello { protocol: u32, name: String },
     /// The player's input for the current tick.
     Intent(PlayerIntent),
+    /// A discrete, reliable action (server validates everything).
+    Action(PlayerAction),
+    /// A chat line for everyone.
+    Chat(String),
+}
+
+/// One-shot actions, valid only while docked at a planet.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum PlayerAction {
+    /// Sell the entire stack of one resource at the docked planet's price.
+    Sell(ResourceType),
+    /// Buy the next tier of an upgrade track.
+    BuyUpgrade(UpgradeKind),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -57,13 +71,21 @@ pub enum ServerToClient {
     },
     /// Authoritative per-tick state.
     Snapshot(Snapshot),
+    /// A chat line from another pilot.
+    Chat { from: String, text: String },
+    /// A system announcement (joins, kills, trades...) for the event feed.
+    Notice(String),
+    /// Somebody's ship was destroyed (the client whose ship it is shows the
+    /// death overlay; everyone gets a Notice alongside).
+    Died { who: NetId },
 }
 
 /// Maps a planet (spawned client-side from shared config) to its server
 /// `NetId` and current deposit level.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PlanetInit {
-    pub config_index: u32,
+    pub system_index: u32,
+    pub planet_index: u32,
     pub net_id: NetId,
     pub deposit_amount: Option<f32>,
 }
@@ -90,10 +112,20 @@ pub struct ShipState {
     pub hull: f32,
     pub stats: ShipStats,
     pub cargo: Cargo,
+    pub credits: u64,
+    pub upgrades: Upgrades,
     /// Replicated intent (drives remote exhaust particles).
     pub intent: PlayerIntent,
     pub mining_target: Option<NetId>,
     pub mining_progress: f32,
+}
+
+/// A blaster bolt in flight.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct ProjectileState {
+    pub net_id: NetId,
+    pub position: Vec2,
+    pub velocity: Vec2,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -116,16 +148,21 @@ pub struct ExhaustedEvent {
     pub kind: ResourceType,
 }
 
-/// One fixed-timestep tick's worth of authoritative state. Ships are sent
-/// in full (they're few and small); everything else is event/delta based.
-/// A ship absent from `ships` has disconnected.
+/// One fixed-timestep tick's worth of authoritative state. Ships and bolts
+/// are sent in full (they're few and small); everything else is event/delta
+/// based. A ship or bolt absent from its list is gone.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Snapshot {
     pub sim_elapsed: f64,
     pub ships: Vec<ShipState>,
+    pub projectiles: Vec<ProjectileState>,
     pub deposit_updates: Vec<DepositUpdate>,
     pub mined: Vec<MinedEvent>,
     pub exhausted: Vec<ExhaustedEvent>,
+    /// New asteroids (belt respawns) since the last snapshot.
+    pub spawned_asteroids: Vec<AsteroidNetInit>,
+    /// Hard impacts this tick (collisions, bolt hits) for spark bursts.
+    pub impacts: Vec<Vec2>,
 }
 
 // ---------------------------------------------------------------------------
@@ -182,14 +219,26 @@ mod tests {
                 hull: 88.0,
                 stats: crate::config::GameConfig::default().ship.stats,
                 cargo,
+                credits: 1250,
+                upgrades: Upgrades {
+                    thrusters: 2,
+                    cargo_bay: 1,
+                    ..Default::default()
+                },
                 intent: PlayerIntent {
                     thrust: 1.0,
                     turn: -0.5,
                     brake: false,
                     mine: true,
+                    fire: true,
                 },
                 mining_target: Some(NetId(7)),
                 mining_progress: 0.6,
+            }],
+            projectiles: vec![ProjectileState {
+                net_id: NetId(300),
+                position: Vec2::new(120.0, -240.0),
+                velocity: Vec2::new(600.0, 30.0),
             }],
             deposit_updates: vec![DepositUpdate {
                 net_id: NetId(7),
@@ -205,6 +254,30 @@ mod tests {
                 position: Vec2::new(2800.0, 40.0),
                 kind: ResourceType::Iron,
             }],
+            spawned_asteroids: vec![AsteroidNetInit {
+                net_id: NetId(500),
+                position: Vec2::new(2700.0, 100.0),
+                rotation: 0.1,
+                size: 20.0,
+                spin: 0.4,
+                kind: ResourceType::Iron,
+                amount: 30.0,
+                max_amount: 30.0,
+            }],
+            impacts: vec![Vec2::new(50.0, 60.0)],
+        }
+    }
+
+    #[test]
+    fn actions_and_chat_round_trip() {
+        for message in [
+            ClientToServer::Action(PlayerAction::Sell(ResourceType::Crystal)),
+            ClientToServer::Action(PlayerAction::BuyUpgrade(UpgradeKind::Thrusters)),
+            ClientToServer::Chat("o7 pilots".into()),
+        ] {
+            let frame = encode_frame(&message).unwrap();
+            let decoded: ClientToServer = read_frame(&mut Cursor::new(frame)).unwrap();
+            assert_eq!(decoded, message);
         }
     }
 
@@ -228,6 +301,7 @@ mod tests {
             turn: 0.0,
             brake: true,
             mine: false,
+            fire: false,
         });
         let mut bytes = encode_frame(&first).unwrap();
         bytes.extend(encode_frame(&second).unwrap());

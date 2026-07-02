@@ -32,8 +32,10 @@ pub enum SimSet {
     /// Network ingress: server applies client intents, client applies
     /// server snapshots. Runs before any local simulation this tick.
     NetSync,
-    /// Integrate ship physics and orbital motion.
+    /// Integrate ship physics and orbital motion (gravity + thrust).
     Movement,
+    /// Weapons fire, collision resolution, damage, death and respawn.
+    Physics,
     /// Mining, cargo transfer, depletion and regeneration.
     Mining,
     /// Network egress: server broadcasts the post-simulation snapshot,
@@ -166,13 +168,17 @@ pub struct SolarSystem {
     pub name: String,
 }
 
-/// The central star of a system.
-#[derive(Component, Debug)]
-pub struct CentralStar;
+/// The central star of a system; `system_index` keys it into `GameConfig`.
+#[derive(Component, Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct CentralStar {
+    pub system_index: usize,
+}
 
-/// A planet; `config_index` keys it back to `GameConfig` (and save files).
+/// A planet; `(system_index, config_index)` keys it back to `GameConfig`
+/// (and save files).
 #[derive(Component, Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Planet {
+    pub system_index: usize,
     pub config_index: usize,
 }
 
@@ -218,10 +224,58 @@ impl ResourceDeposit {
     }
 }
 
-/// Physical radius of a celestial body; mining range is measured from the
-/// body's surface, not its center.
+/// Physical radius of a celestial body or ship: used for mining range
+/// (measured from the surface) and collision circles.
 #[derive(Component, Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct BodyRadius(pub f32);
+
+/// This body pulls on ships and projectiles: G·M in units³/s².
+#[derive(Component, Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct GravitySource(pub f32);
+
+/// A blaster bolt in flight. Server-simulated (with gravity!), replicated
+/// to clients by presence in snapshots.
+#[derive(Component, Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Projectile {
+    /// Who fired it (bolts never hit their owner).
+    pub owner: NetId,
+    pub damage: f32,
+    /// Seconds of flight left.
+    pub ttl: f32,
+}
+
+/// Blaster cooldown bookkeeping (server-side).
+#[derive(Component, Debug, Default, Clone, Copy)]
+pub struct WeaponCooldown(pub f32);
+
+/// Post-respawn invulnerability window, seconds remaining (server-side).
+#[derive(Component, Debug, Default, Clone, Copy)]
+pub struct SpawnShield(pub f32);
+
+/// Who hurt this ship last (for kill attribution), server-side.
+#[derive(Component, Debug, Default, Clone)]
+pub struct LastDamager {
+    pub name: Option<String>,
+    /// Sim time of the hit; attribution expires after a few seconds.
+    pub at: f64,
+}
+
+/// A pilot's bank balance.
+#[derive(Component, Debug, Default, Clone, Copy, Serialize, Deserialize)]
+pub struct Credits(pub u64);
+
+/// A jump gate: fly into it to be thrown to its partner in another system.
+#[derive(Component, Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Gate {
+    pub system_index: usize,
+    pub gate_index: usize,
+    pub to_system: usize,
+    pub to_gate: usize,
+}
+
+/// Seconds until this ship may use a gate again (stops instant ping-pong).
+#[derive(Component, Debug, Default, Clone, Copy)]
+pub struct GateCooldown(pub f32);
 
 /// Mining beam state for one ship. `target` is transient (entity ids are not
 /// stable across sessions) and intentionally skipped by serde.
@@ -247,9 +301,45 @@ pub struct PlayerIntent {
     pub brake: bool,
     /// Mining beam engaged.
     pub mine: bool,
+    /// Blaster trigger held.
+    pub fire: bool,
 }
 
 /// The intent gathered from this process's keyboard, before it goes to the
 /// server. Client-side only.
 #[derive(Resource, Debug, Default, Clone, Copy)]
 pub struct LocalIntent(pub PlayerIntent);
+
+// ---------------------------------------------------------------------------
+// Client-side bus (UI <-> network plumbing, no gameplay state)
+// ---------------------------------------------------------------------------
+
+/// True while the chat input line is capturing the keyboard; flight and
+/// dock keybinds are suppressed.
+#[derive(Resource, Debug, Default)]
+pub struct ChatTyping(pub bool);
+
+/// UI asks the network layer to send a chat line.
+#[derive(Message, Debug, Clone)]
+pub struct SendChat(pub String);
+
+/// UI asks the network layer to send a dock action.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct SendAction(pub crate::protocol::PlayerAction);
+
+/// Chat + system notices shown in the feed panel (newest last).
+#[derive(Resource, Debug, Default)]
+pub struct Feed(pub std::collections::VecDeque<String>);
+
+impl Feed {
+    pub fn push(&mut self, line: String) {
+        self.0.push_back(line);
+        while self.0.len() > 8 {
+            self.0.pop_front();
+        }
+    }
+}
+
+/// Set when our own ship is destroyed; drives the death overlay.
+#[derive(Resource, Debug, Default)]
+pub struct DeathFlash(pub f32);

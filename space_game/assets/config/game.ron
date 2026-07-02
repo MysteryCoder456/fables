@@ -1,118 +1,399 @@
-// Data-driven game configuration.
-// Edit this file to tune ship stats, planets, orbits and asteroid belts —
-// no recompile needed. If this file is missing or invalid the game falls
-// back to identical built-in defaults.
-GameConfig(
-    ship: ShipConfig(
+// Data-driven game configuration (schema: src/config.rs).
+// Edit numbers freely — no recompile needed; both server and client read
+// this file and must share it. Regenerate from code defaults with:
+//   cargo test regenerate_shipped_config -- --ignored
+(
+    ship: (
         spawn_position: (0.0, -1400.0),
-        stats: ShipStats(
+        docking_range: 160.0,
+        stats: (
             max_hull: 100.0,
             cargo_capacity: 60,
             mining_power: 6.0,
             mining_range: 160.0,
-            thrust_accel: 300.0,
-            turn_speed: 3.2,
-            max_speed: 500.0,
-            drag: 0.4,
+            thrust_accel: 320.0,
+            turn_speed: 3.4,
+            max_speed: 700.0,
+            drag: 0.08,
         ),
     ),
-    system: SolarSystemConfig(
-        name: "Helios",
-        star: StarConfig(
+    physics: (
+        restitution: 0.45,
+        min_impact_for_damage: 90.0,
+        impact_damage_scale: 0.18,
+        ship_radius: 14.0,
+        star_burn_dps: 25.0,
+        star_burn_radius_factor: 1.2,
+        projectile_speed: 650.0,
+        projectile_ttl: 2.2,
+        projectile_radius: 3.0,
+        projectile_base_damage: 10.0,
+        fire_cooldown: 0.22,
+        respawn_shield_secs: 3.0,
+    ),
+    systems: [
+        (
             name: "Helios",
-            radius: 300.0,
-            color: (1.0, 0.85, 0.45),
+            center: (0.0, 0.0),
+            star: (
+                name: "Helios",
+                radius: 300.0,
+                color: (1.0, 0.85, 0.45),
+                gravity_mu: 60000000.0,
+            ),
+            planets: [
+                (
+                    name: "Cinder",
+                    radius: 55.0,
+                    color: (0.85, 0.45, 0.3),
+                    orbit_radius: 1200.0,
+                    orbit_period: 180.0,
+                    orbit_phase: 0.4,
+                    gravity_mu: 75000.0,
+                    deposit: Some((
+                        kind: Iron,
+                        max_amount: 600.0,
+                        regen_per_sec: 0.5,
+                    )),
+                    market: [
+                        (
+                            kind: Iron,
+                            price: 2,
+                        ),
+                        (
+                            kind: Ice,
+                            price: 5,
+                        ),
+                        (
+                            kind: Crystal,
+                            price: 9,
+                        ),
+                        (
+                            kind: Gas,
+                            price: 6,
+                        ),
+                    ],
+                ),
+                (
+                    name: "Verdis",
+                    radius: 80.0,
+                    color: (0.35, 0.7, 0.45),
+                    orbit_radius: 2100.0,
+                    orbit_period: 320.0,
+                    orbit_phase: 2.4,
+                    gravity_mu: 160000.0,
+                    deposit: Some((
+                        kind: Gas,
+                        max_amount: 500.0,
+                        regen_per_sec: 0.4,
+                    )),
+                    market: [
+                        (
+                            kind: Iron,
+                            price: 4,
+                        ),
+                        (
+                            kind: Ice,
+                            price: 5,
+                        ),
+                        (
+                            kind: Crystal,
+                            price: 8,
+                        ),
+                        (
+                            kind: Gas,
+                            price: 3,
+                        ),
+                    ],
+                ),
+                (
+                    name: "Glacius",
+                    radius: 65.0,
+                    color: (0.6, 0.8, 0.95),
+                    orbit_radius: 3400.0,
+                    orbit_period: 540.0,
+                    orbit_phase: 4.2,
+                    gravity_mu: 105000.0,
+                    deposit: Some((
+                        kind: Ice,
+                        max_amount: 700.0,
+                        regen_per_sec: 0.6,
+                    )),
+                    market: [
+                        (
+                            kind: Iron,
+                            price: 4,
+                        ),
+                        (
+                            kind: Ice,
+                            price: 2,
+                        ),
+                        (
+                            kind: Crystal,
+                            price: 9,
+                        ),
+                        (
+                            kind: Gas,
+                            price: 7,
+                        ),
+                    ],
+                ),
+                (
+                    name: "Umbra",
+                    radius: 95.0,
+                    color: (0.5, 0.4, 0.65),
+                    orbit_radius: 5200.0,
+                    orbit_period: 900.0,
+                    orbit_phase: 1.1,
+                    gravity_mu: 225000.0,
+                    deposit: Some((
+                        kind: Crystal,
+                        max_amount: 400.0,
+                        regen_per_sec: 0.25,
+                    )),
+                    market: [
+                        (
+                            kind: Iron,
+                            price: 5,
+                        ),
+                        (
+                            kind: Ice,
+                            price: 6,
+                        ),
+                        (
+                            kind: Crystal,
+                            price: 5,
+                        ),
+                        (
+                            kind: Gas,
+                            price: 7,
+                        ),
+                    ],
+                ),
+                (
+                    name: "Ferrum",
+                    radius: 45.0,
+                    color: (0.7, 0.6, 0.5),
+                    orbit_radius: 6800.0,
+                    orbit_period: 1400.0,
+                    orbit_phase: 5.5,
+                    gravity_mu: 50000.0,
+                    deposit: Some((
+                        kind: Iron,
+                        max_amount: 900.0,
+                        regen_per_sec: 0.8,
+                    )),
+                    market: [
+                        (
+                            kind: Iron,
+                            price: 3,
+                        ),
+                        (
+                            kind: Ice,
+                            price: 4,
+                        ),
+                        (
+                            kind: Crystal,
+                            price: 10,
+                        ),
+                        (
+                            kind: Gas,
+                            price: 8,
+                        ),
+                    ],
+                ),
+            ],
+            belts: [
+                (
+                    inner_radius: 2600.0,
+                    outer_radius: 3000.0,
+                    asteroid_count: 90,
+                    seed: 7,
+                    resources: [
+                        Iron,
+                        Ice,
+                    ],
+                    min_amount: 15.0,
+                    max_amount: 50.0,
+                    min_size: 14.0,
+                    max_size: 34.0,
+                    respawn_secs: 45.0,
+                ),
+                (
+                    inner_radius: 4200.0,
+                    outer_radius: 4800.0,
+                    asteroid_count: 130,
+                    seed: 99,
+                    resources: [
+                        Iron,
+                        Crystal,
+                        Gas,
+                    ],
+                    min_amount: 25.0,
+                    max_amount: 80.0,
+                    min_size: 16.0,
+                    max_size: 40.0,
+                    respawn_secs: 60.0,
+                ),
+            ],
+            gates: [
+                (
+                    name: "Cryon Gate",
+                    position: (0.0, 5800.0),
+                    radius: 90.0,
+                    to_system: 1,
+                    to_gate: 0,
+                ),
+            ],
         ),
-        planets: [
-            PlanetConfig(
-                name: "Cinder",
-                radius: 55.0,
-                color: (0.85, 0.45, 0.3),
-                orbit_radius: 1200.0,
-                orbit_period: 180.0,
-                orbit_phase: 0.4,
-                deposit: Some(DepositConfig(
-                    kind: Iron,
-                    max_amount: 600.0,
-                    regen_per_sec: 0.5,
-                )),
+        (
+            name: "Cryon",
+            center: (80000.0, 0.0),
+            star: (
+                name: "Cryon",
+                radius: 220.0,
+                color: (0.65, 0.78, 1.0),
+                gravity_mu: 35000000.0,
             ),
-            PlanetConfig(
-                name: "Verdis",
-                radius: 80.0,
-                color: (0.35, 0.7, 0.45),
-                orbit_radius: 2100.0,
-                orbit_period: 320.0,
-                orbit_phase: 2.4,
-                deposit: Some(DepositConfig(
-                    kind: Gas,
-                    max_amount: 500.0,
-                    regen_per_sec: 0.4,
-                )),
-            ),
-            PlanetConfig(
-                name: "Glacius",
-                radius: 65.0,
-                color: (0.6, 0.8, 0.95),
-                orbit_radius: 3400.0,
-                orbit_period: 540.0,
-                orbit_phase: 4.2,
-                deposit: Some(DepositConfig(
-                    kind: Ice,
-                    max_amount: 700.0,
-                    regen_per_sec: 0.6,
-                )),
-            ),
-            PlanetConfig(
-                name: "Umbra",
-                radius: 95.0,
-                color: (0.5, 0.4, 0.65),
-                orbit_radius: 5200.0,
-                orbit_period: 900.0,
-                orbit_phase: 1.1,
-                deposit: Some(DepositConfig(
-                    kind: Crystal,
-                    max_amount: 400.0,
-                    regen_per_sec: 0.25,
-                )),
-            ),
-            PlanetConfig(
-                name: "Ferrum",
-                radius: 45.0,
-                color: (0.7, 0.6, 0.5),
-                orbit_radius: 6800.0,
-                orbit_period: 1400.0,
-                orbit_phase: 5.5,
-                deposit: Some(DepositConfig(
-                    kind: Iron,
-                    max_amount: 900.0,
-                    regen_per_sec: 0.8,
-                )),
-            ),
-        ],
-        belts: [
-            BeltConfig(
-                inner_radius: 2600.0,
-                outer_radius: 3000.0,
-                asteroid_count: 90,
-                seed: 7,
-                resources: [Iron, Ice],
-                min_amount: 15.0,
-                max_amount: 50.0,
-                min_size: 14.0,
-                max_size: 34.0,
-            ),
-            BeltConfig(
-                inner_radius: 4200.0,
-                outer_radius: 4800.0,
-                asteroid_count: 130,
-                seed: 99,
-                resources: [Iron, Crystal, Gas],
-                min_amount: 25.0,
-                max_amount: 80.0,
-                min_size: 16.0,
-                max_size: 40.0,
-            ),
-        ],
-    ),
+            planets: [
+                (
+                    name: "Boreas",
+                    radius: 70.0,
+                    color: (0.7, 0.85, 1.0),
+                    orbit_radius: 1500.0,
+                    orbit_period: 260.0,
+                    orbit_phase: 0.9,
+                    gravity_mu: 120000.0,
+                    deposit: Some((
+                        kind: Ice,
+                        max_amount: 800.0,
+                        regen_per_sec: 0.7,
+                    )),
+                    market: [
+                        (
+                            kind: Iron,
+                            price: 7,
+                        ),
+                        (
+                            kind: Ice,
+                            price: 2,
+                        ),
+                        (
+                            kind: Crystal,
+                            price: 11,
+                        ),
+                        (
+                            kind: Gas,
+                            price: 9,
+                        ),
+                    ],
+                ),
+                (
+                    name: "Halcyon",
+                    radius: 85.0,
+                    color: (0.9, 0.75, 0.5),
+                    orbit_radius: 2800.0,
+                    orbit_period: 430.0,
+                    orbit_phase: 3.6,
+                    gravity_mu: 180000.0,
+                    deposit: Some((
+                        kind: Gas,
+                        max_amount: 650.0,
+                        regen_per_sec: 0.5,
+                    )),
+                    market: [
+                        (
+                            kind: Iron,
+                            price: 6,
+                        ),
+                        (
+                            kind: Ice,
+                            price: 6,
+                        ),
+                        (
+                            kind: Crystal,
+                            price: 12,
+                        ),
+                        (
+                            kind: Gas,
+                            price: 4,
+                        ),
+                    ],
+                ),
+                (
+                    name: "Vesper",
+                    radius: 50.0,
+                    color: (0.8, 0.6, 0.95),
+                    orbit_radius: 4200.0,
+                    orbit_period: 700.0,
+                    orbit_phase: 5.1,
+                    gravity_mu: 60000.0,
+                    deposit: Some((
+                        kind: Crystal,
+                        max_amount: 500.0,
+                        regen_per_sec: 0.3,
+                    )),
+                    market: [
+                        (
+                            kind: Iron,
+                            price: 8,
+                        ),
+                        (
+                            kind: Ice,
+                            price: 7,
+                        ),
+                        (
+                            kind: Crystal,
+                            price: 6,
+                        ),
+                        (
+                            kind: Gas,
+                            price: 8,
+                        ),
+                    ],
+                ),
+            ],
+            belts: [
+                (
+                    inner_radius: 1900.0,
+                    outer_radius: 2200.0,
+                    asteroid_count: 70,
+                    seed: 88,
+                    resources: [
+                        Ice,
+                    ],
+                    min_amount: 25.0,
+                    max_amount: 70.0,
+                    min_size: 14.0,
+                    max_size: 30.0,
+                    respawn_secs: 50.0,
+                ),
+                (
+                    inner_radius: 3300.0,
+                    outer_radius: 3800.0,
+                    asteroid_count: 120,
+                    seed: 431,
+                    resources: [
+                        Crystal,
+                        Ice,
+                        Iron,
+                    ],
+                    min_amount: 30.0,
+                    max_amount: 90.0,
+                    min_size: 15.0,
+                    max_size: 38.0,
+                    respawn_secs: 40.0,
+                ),
+            ],
+            gates: [
+                (
+                    name: "Helios Gate",
+                    position: (0.0, -4600.0),
+                    radius: 90.0,
+                    to_system: 0,
+                    to_gate: 0,
+                ),
+            ],
+        ),
+    ],
 )

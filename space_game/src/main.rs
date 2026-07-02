@@ -31,7 +31,7 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: format!("Space Game — {player_name}"),
+                title: format!("Helios Drift — {player_name}"),
                 ..default()
             }),
             ..default()

@@ -9,10 +9,12 @@
 //! `ui`, `effects`, `net_client`.
 
 pub mod camera;
+pub mod economy;
 pub mod effects;
 pub mod net_client;
 pub mod net_server;
 pub mod persistence;
+pub mod physics;
 pub mod player;
 pub mod resources;
 pub mod sim;

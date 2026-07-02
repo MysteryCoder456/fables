@@ -16,19 +16,27 @@ pub struct EffectsPlugin;
 
 impl Plugin for EffectsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
+        app.add_message::<ImpactFlash>().add_systems(
             Update,
             (
                 spawn_thrust_particles,
                 spawn_mining_sparks,
                 sparkle_on_intake,
                 burst_on_exhausted,
+                burst_on_impact,
                 update_mining_beams,
                 update_particles,
             )
                 .in_set(RenderSet::Decor),
         );
     }
+}
+
+/// A hard impact somewhere (collision or blaster hit), replicated from the
+/// server for spark bursts.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct ImpactFlash {
+    pub position: Vec2,
 }
 
 const PARTICLE_Z: f32 = 9.0;
@@ -142,6 +150,24 @@ fn sparkle_on_intake(
                 message.kind.color(),
                 2.0,
                 0.35,
+            );
+        }
+    }
+}
+
+/// White-hot spark burst wherever something slammed into something else.
+fn burst_on_impact(mut commands: Commands, mut messages: MessageReader<ImpactFlash>) {
+    let mut rng = rand::thread_rng();
+    for message in messages.read() {
+        for _ in 0..10 {
+            let dir = Vec2::from_angle(rng.gen_range(0.0..std::f32::consts::TAU));
+            spawn_particle(
+                &mut commands,
+                message.position + dir * 2.0,
+                dir * rng.gen_range(60.0..240.0),
+                Color::srgba(1.0, 0.9, 0.6, 0.95),
+                rng.gen_range(1.5..3.5),
+                rng.gen_range(0.2..0.45),
             );
         }
     }

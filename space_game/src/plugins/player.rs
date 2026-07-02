@@ -30,7 +30,7 @@ impl Plugin for PlayerSimPlugin {
     }
 }
 
-fn ship_movement(
+pub fn ship_movement(
     time: Res<Time>,
     mut ships: Query<
         (
@@ -79,11 +79,21 @@ pub struct PlayerClientPlugin;
 impl Plugin for PlayerClientPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LocalIntent>()
+            .init_resource::<crate::components::ChatTyping>()
             .add_systems(Update, (gather_input, attach_ship_visuals));
     }
 }
 
-fn gather_input(keys: Res<ButtonInput<KeyCode>>, mut local: ResMut<LocalIntent>) {
+fn gather_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    typing: Res<crate::components::ChatTyping>,
+    mut local: ResMut<LocalIntent>,
+) {
+    // While the chat line is open the keyboard belongs to it.
+    if typing.0 {
+        local.0 = crate::components::PlayerIntent::default();
+        return;
+    }
     let pressed = |a: KeyCode, b: KeyCode| keys.pressed(a) || keys.pressed(b);
     let intent = &mut local.0;
 
@@ -104,6 +114,7 @@ fn gather_input(keys: Res<ButtonInput<KeyCode>>, mut local: ResMut<LocalIntent>)
 
     intent.brake = pressed(KeyCode::KeyS, KeyCode::ArrowDown);
     intent.mine = keys.pressed(KeyCode::Space);
+    intent.fire = keys.pressed(KeyCode::KeyF);
 }
 
 /// Give freshly spawned/replicated ship entities a render mesh. The local

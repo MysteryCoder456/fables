@@ -1,7 +1,7 @@
 # Architecture
 
-This document describes the client-server split, the ECS layout, the wire
-protocol, and how the pieces fit together.
+This document describes the client-server split, the physics model, the ECS
+layout, the wire protocol, and how the pieces fit together.
 
 ## Overview
 
@@ -17,38 +17,69 @@ The game is two binaries sharing one library:
 The transport is TCP with length-prefixed bincode frames (`src/protocol.rs`).
 TCP's reliability and ordering let the protocol be event-based — nothing
 needs re-sending, and one-shot events (mined! exhausted!) can't be lost.
-A hand-rolled transport was chosen over `bevy_replicon`/`lightyear` for this
-pass because the protocol is tiny (two message types up, three down), the
-sim/render seams were already cut for it, and it keeps the dependency
-surface flat; swapping in a replication crate later remains possible since
-all gameplay state is serializable components (see below).
+A hand-rolled transport was chosen over `bevy_replicon`/`lightyear` because
+the protocol is small (four message types up, six down), the sim/render
+seams were already cut for it, and it keeps the dependency surface flat;
+swapping in a replication crate later remains possible since all gameplay
+state is serializable components (see below).
+
+## Physics model
+
+Everything heavy is real:
+
+- **Gravity**: stars and planets carry a `GravitySource` (G·M). Ships and
+  blaster bolts feel the summed inverse-square field each tick
+  (`logic/gravity.rs`); inside a body the field decays linearly (uniform-
+  sphere interior solution), so there are no singularities. Planets remain
+  on their configured circular orbits — they are treated as the long-term
+  solution of the star's field rather than integrated (stable forever, free
+  to replicate).
+- **Collisions** (`logic/collision.rs`): circle-vs-circle with restitution.
+  Ships bounce off stars, planets (in the moving planet's rest frame — an
+  orbiting planet can run you down), asteroids, and each other (equal-mass
+  momentum exchange). Interpenetration is resolved positionally; the normal
+  closing speed above a free threshold converts to hull damage. Star coronas
+  additionally burn ships per second.
+- **Combat**: bolts spawn with the shooter's velocity plus muzzle speed and
+  fly under gravity with a TTL. They never hit their owner; they stop on
+  ships, rock and stars. Damage scales with the Blaster upgrade tier.
+- **Death**: at zero hull the pilot respawns at the home spawn with full
+  hull, empty cargo, kept credits/upgrades, a 3 s spawn shield, and a feed
+  line crediting whoever dealt damage in the last 8 s.
+
+All of it is server-side; the tuning constants live in `PhysicsConfig` in
+the shared RON config.
 
 ## The tick loop
 
 ```
 CLIENT (each frame)                      SERVER (64 Hz FixedUpdate)
   keyboard -> LocalIntent                  SimSet::CachePrevious
-  PreUpdate: drain socket                    copy current->previous, advance clock
-    Welcome  -> build world, Playing       SimSet::NetSync
-    Snapshot -> buffer                       apply client intents to ship components
-                                             spawn ships for joiners (+ send Welcome)
-CLIENT (64 Hz FixedUpdate)                   capture & despawn leavers' ships
-  SimSet::CachePrevious                    SimSet::Movement
-  SimSet::NetSync                            integrate thrust physics per ship
-    apply snapshots: ship states,            planet orbits, asteroid tumble
-    deposit levels, mined/exhausted        SimSet::Mining
-  SimSet::Movement (decorative)              beam targeting, extraction, cargo,
-    planet orbits, asteroid tumble           depletion, regeneration
+  chat/dock keys -> SendChat/SendAction      copy current->previous, advance clock
+  PreUpdate: drain socket                  SimSet::NetSync
+    Welcome  -> build universe, Playing      apply intents; queue dock actions
+    Snapshot -> buffer                       spawn ships for joiners (+ Welcome)
+    Chat/Notice -> feed                      capture & despawn leavers' ships
+    Died -> death overlay                  SimSet::Movement
+                                             gravity, thrust integration per ship
+CLIENT (64 Hz FixedUpdate)                   planet orbits, asteroid tumble
+  SimSet::CachePrevious                    SimSet::Physics
+  SimSet::NetSync                            weapons fire, projectile flight,
+    apply snapshots: ships, bolts,           collisions + damage, star burn,
+    deposits, mined/exhausted/spawned,       death/respawn, gate traversal
+    impacts                                SimSet::Mining
+  SimSet::Movement (decorative)              mining, depletion, regeneration,
+    planet orbits, asteroid tumble           dock actions (sell/buy), belt respawn
   SimSet::PostSim                          SimSet::PostSim
-    send LocalIntent                         broadcast one snapshot to all clients
+    send LocalIntent                         broadcast snapshot + notices + chat
 ```
 
 Key properties:
 
 - **Intent, not input.** The client sends `PlayerIntent { thrust, turn,
-  brake, mine }` once per tick. The server clamps and applies it to that
-  player's ship component; simulation systems consume it per-ship. Cheating
-  by modified clients is limited to what intent can express.
+  brake, mine, fire }` once per tick, plus discrete `Action` messages
+  (sell/buy) that the server re-validates (docked? has cargo? can afford?).
+  Cheating by modified clients is limited to what intent can express.
 - **Determinism saves bandwidth.** Planet positions are a pure function of
   the replicated sim clock (`logic/orbit.rs`, f64 math), and asteroid tumble
   is a pure function of spin rate — so neither is ever sent. A snapshot with
@@ -70,14 +101,24 @@ Key properties:
 ```
 client -> server:  Hello { protocol, name }        (once)
                    Intent(PlayerIntent)             (every tick)
+                   Action(Sell | BuyUpgrade)        (on dock keypress)
+                   Chat(text)                       (on Enter)
 
 server -> client:  Reject { reason }                (bad version / name taken)
                    Welcome { your_ship, sim_elapsed,
                              planets, asteroids }   (once)
-                   Snapshot { sim_elapsed, ships,
-                              deposit_updates,
-                              mined, exhausted }    (every tick)
+                   Snapshot { sim_elapsed, ships, projectiles,
+                              deposit_updates, mined, exhausted,
+                              spawned_asteroids, impacts }   (every tick)
+                   Chat { from, text }              (relayed)
+                   Notice(text)                     (joins, kills, trades)
+                   Died { who }                     (death overlay trigger)
 ```
+
+Ships and bolts are presence-keyed (absent = gone); world objects have
+explicit lifecycle events (`exhausted` removals, `spawned_asteroids` from
+belt respawns). Teleports (respawn, gate jumps) are detected client-side by
+distance and snap the interpolation buffer instead of smearing.
 
 All wire entity references are `NetId`s (server-allocated `u64`s); `Entity`
 ids never cross the network. The client keeps a `NetId -> Entity` map, split
@@ -94,18 +135,20 @@ block; broadcast frames are serialized once and shared as `Arc<Vec<u8>>`.
 | -------------------- | ------- | -------------------------------------------------------- |
 | `SimulationPlugin`   | both    | fixed-timestep sets, `SimClock`, state double-buffering  |
 | `PlayerSimPlugin`    | server  | thrust physics per ship from per-ship `PlayerIntent`     |
-| `WorldSimPlugin`     | server  | authoritative world spawn (config or save), `NetId`s     |
+| `PhysicsPlugin`      | server  | gravity, weapons, projectiles, collisions, death/respawn |
+| `WorldSimPlugin`     | server  | authoritative universe spawn, `NetId`s, gate traversal   |
 | `WorldMotionPlugin`  | both    | orbits + tumble (deterministic, so clients run it too)   |
 | `ResourcesPlugin`    | server  | mining beam, cargo transfer, depletion, regeneration     |
-| `PersistencePlugin`  | server  | RON save/load: world + per-pilot ship roster             |
-| `ServerNetPlugin`    | server  | TCP listener, joins/leaves, intent ingress, snapshots    |
-| `ClientNetPlugin`    | client  | connect, world build from `Welcome`, snapshot apply      |
+| `EconomyPlugin`      | server  | dock trading, upgrades, belt respawn ecology             |
+| `PersistencePlugin`  | server  | RON save/load: universe + pilot roster (credits/tiers)   |
+| `ServerNetPlugin`    | server  | TCP listener, joins/leaves, ingress, snapshots, chat     |
+| `ClientNetPlugin`    | client  | connect, universe build from `Welcome`, snapshot apply   |
 | `PlayerClientPlugin` | client  | keyboard -> `LocalIntent`; ship mesh attachment           |
-| `WorldClientPlugin`  | client  | star/planet/asteroid mesh attachment                     |
+| `WorldClientPlugin`  | client  | star/planet/asteroid/gate mesh attachment                |
 | `GameCameraPlugin`   | client  | smooth-follow camera on the `LocalShip`                  |
 | `VisualsPlugin`      | client  | render interpolation, parallax starfield                 |
-| `EffectsPlugin`      | client  | per-ship exhaust/beams/sparks (remote ships included)    |
-| `UiPlugin`           | client  | HUD, mining bar, minimap (dots track ships dynamically)  |
+| `EffectsPlugin`      | client  | per-ship exhaust/beams/sparks/impacts                    |
+| `UiPlugin`           | client  | HUD, dock panel, chat + feed, death overlay, minimap     |
 
 The sim/render seam is structural: entities carry only serializable sim
 components (`SimPosition`, `SimRotation`, `Velocity`, `ShipStats`, `Hull`,
@@ -121,15 +164,21 @@ framing and save schema.
 ## World model
 
 ```
-SolarSystem "Helios"            (root entity)
-├── CentralStar                 (static; glow attached client-side)
-├── Planet ×5                   (Orbit, SimPosition, ResourceDeposit, NetId)
-└── Asteroid ×220               (SimPosition, SimRotation, Spin,
-                                 ResourceDeposit, BodyRadius, NetId)
-Ship (per connected player)     (PlayerShip, PlayerName, NetId, PlayerIntent,
-                                 SimPosition/Rotation, Velocity, Hull,
-                                 ShipStats, Cargo, MiningRig)
+SolarSystem "Helios" (center 0,0)         SolarSystem "Cryon" (center 80k,0)
+├── CentralStar (GravitySource)           ├── CentralStar (blue dwarf)
+├── Planet ×5 (Orbit, Deposit, Market)    ├── Planet ×3 (ice/gas/crystal)
+├── Asteroid belts ×2 (respawning)        ├── Asteroid belts ×2 (richer)
+└── Gate -> Cryon                         └── Gate -> Helios
+Ship (per connected player)   (PlayerShip, PlayerName, NetId, PlayerIntent,
+                               SimPosition/Rotation, Velocity, Hull, Cargo,
+                               Credits, Upgrades, ShipStats*, MiningRig,
+                               WeaponCooldown, SpawnShield, GateCooldown)
+* ShipStats are always DERIVED from base config + upgrade tiers.
 ```
+
+The minimap shows whichever system the local ship is nearest to; markets
+differ per planet, so cross-system hauling through the gates is the
+high-margin loop.
 
 - The **server** spawns the world from `assets/config/game.ron` (or restores
   it from `save.ron`): belts are generated from explicit RNG seeds, so
@@ -157,10 +206,12 @@ against schema drift (v1 single-player saves are rejected gracefully).
 - Snapshots go to every client at full rate — no interest management. Fine
   for a handful of players; sharding by `SolarSystem` is the natural next
   cut.
-- All ships' cargo is included in the broadcast snapshot (no per-client
-  filtering); nothing secret lives there today.
-- No collision/damage: `Hull` exists, is replicated and persisted, but
-  nothing damages ships yet.
+- All ships' cargo/credits are included in the broadcast snapshot (no
+  per-client filtering); treat balances as public leaderboard data.
+- Planets stay on rails rather than feeling each other's gravity — a
+  deliberate trade of n-body chaos for a stable, replicable world.
+- Asteroids are immovable collision terrain (infinite mass).
 - Pilot "auth" is just the name string. Real accounts/sessions are future
   work.
-- Ships spawn at the config spawn point, so two new pilots briefly overlap.
+- Ships spawn/respawn at one config spawn point; two fresh pilots overlap
+  until gravity and collision push them apart (spawn shields cover it).

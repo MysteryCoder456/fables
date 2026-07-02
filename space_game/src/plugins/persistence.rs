@@ -12,14 +12,15 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::components::{
-    Asteroid, Hull, Planet, PlayerName, PlayerShip, ResourceDeposit, ShipStats, SimClock,
+    Asteroid, Credits, Hull, Planet, PlayerName, PlayerShip, ResourceDeposit, SimClock,
     SimPosition, SimRotation, Spin, Velocity,
 };
 use crate::logic::cargo::Cargo;
+use crate::logic::economy::Upgrades;
 use crate::resource_types::ResourceType;
 
 pub const SAVE_PATH: &str = "save.ron";
-const SAVE_VERSION: u32 = 2;
+const SAVE_VERSION: u32 = 3;
 const AUTOSAVE_INTERVAL_SECS: f32 = 30.0;
 
 pub struct PersistencePlugin;
@@ -34,7 +35,7 @@ impl Plugin for PersistencePlugin {
                 .map(|save| {
                     save.players
                         .iter()
-                        .map(|player| (player.name.clone(), player.ship.clone()))
+                        .map(|player| (player.name.clone(), player.clone()))
                         .collect()
                 })
                 .unwrap_or_default(),
@@ -66,16 +67,19 @@ pub struct SaveGame {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerSave {
     pub name: String,
+    pub credits: u64,
+    pub upgrades: Upgrades,
     pub ship: ShipSave,
 }
 
+/// Kinematic + hold state. Stats are NOT saved: they are always derived
+/// from base config + upgrade tiers, so balance patches apply on login.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShipSave {
     pub position: Vec2,
     pub rotation: f32,
     pub velocity: Vec2,
     pub hull: f32,
-    pub stats: ShipStats,
     pub cargo: Cargo,
 }
 
@@ -92,6 +96,7 @@ pub struct AsteroidSave {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanetDepositSave {
+    pub system_index: usize,
     pub config_index: usize,
     pub amount: f32,
 }
@@ -101,30 +106,37 @@ pub struct PlanetDepositSave {
 #[derive(Resource, Debug)]
 pub struct PendingLoad(pub Option<SaveGame>);
 
-/// Ship state for every player the server has ever seen, keyed by pilot
-/// name. Connected players' entries are refreshed on save and disconnect.
+/// Everything persistent about every pilot the server has ever seen, keyed
+/// by name. Connected players' entries are refreshed on save and disconnect.
 #[derive(Resource, Debug, Default)]
-pub struct PlayerRoster(pub HashMap<String, ShipSave>);
+pub struct PlayerRoster(pub HashMap<String, PlayerSave>);
 
 #[derive(Resource)]
 struct AutosaveTimer(Timer);
 
-/// Capture a live ship's persistent state (used on save and on disconnect).
-pub fn capture_ship(
+/// Capture a live pilot's persistent state (used on save and disconnect).
+#[allow(clippy::too_many_arguments)]
+pub fn capture_pilot(
+    name: &PlayerName,
     pos: &SimPosition,
     rot: &SimRotation,
     vel: &Velocity,
     hull: &Hull,
-    stats: &ShipStats,
     cargo: &Cargo,
-) -> ShipSave {
-    ShipSave {
-        position: pos.current,
-        rotation: rot.current,
-        velocity: vel.0,
-        hull: hull.0,
-        stats: stats.clone(),
-        cargo: cargo.clone(),
+    credits: &Credits,
+    upgrades: &Upgrades,
+) -> PlayerSave {
+    PlayerSave {
+        name: name.0.clone(),
+        credits: credits.0,
+        upgrades: *upgrades,
+        ship: ShipSave {
+            position: pos.current,
+            rotation: rot.current,
+            velocity: vel.0,
+            hull: hull.0,
+            cargo: cargo.clone(),
+        },
     }
 }
 
@@ -183,8 +195,9 @@ fn save_when_triggered(
             &SimRotation,
             &Velocity,
             &Hull,
-            &ShipStats,
             &Cargo,
+            &Credits,
+            &Upgrades,
         ),
         With<PlayerShip>,
     >,
@@ -204,24 +217,17 @@ fn save_when_triggered(
     }
 
     // Refresh the roster from live ships; offline entries persist as-is.
-    for (name, pos, rot, vel, hull, stats, cargo) in &ships {
+    for (name, pos, rot, vel, hull, cargo, credits, upgrades) in &ships {
         roster.0.insert(
             name.0.clone(),
-            capture_ship(pos, rot, vel, hull, stats, cargo),
+            capture_pilot(name, pos, rot, vel, hull, cargo, credits, upgrades),
         );
     }
 
     let save = SaveGame {
         version: SAVE_VERSION,
         sim_elapsed: clock.elapsed,
-        players: roster
-            .0
-            .iter()
-            .map(|(name, ship)| PlayerSave {
-                name: name.clone(),
-                ship: ship.clone(),
-            })
-            .collect(),
+        players: roster.0.values().cloned().collect(),
         asteroids: asteroids
             .iter()
             .map(|(pos, rot, asteroid, spin, deposit)| AsteroidSave {
@@ -237,6 +243,7 @@ fn save_when_triggered(
         planet_deposits: planets
             .iter()
             .map(|(planet, deposit)| PlanetDepositSave {
+                system_index: planet.system_index,
                 config_index: planet.config_index,
                 amount: deposit.amount,
             })
@@ -271,12 +278,17 @@ mod tests {
             sim_elapsed: 1234.567,
             players: vec![PlayerSave {
                 name: "ada".into(),
+                credits: 640,
+                upgrades: Upgrades {
+                    thrusters: 1,
+                    cargo_bay: 2,
+                    ..Default::default()
+                },
                 ship: ShipSave {
                     position: Vec2::new(-321.5, 908.25),
                     rotation: 1.25,
                     velocity: Vec2::new(10.0, -4.5),
                     hull: 87.5,
-                    stats: crate::config::GameConfig::default().ship.stats,
                     cargo,
                 },
             }],
@@ -290,6 +302,7 @@ mod tests {
                 max_amount: 40.0,
             }],
             planet_deposits: vec![PlanetDepositSave {
+                system_index: 0,
                 config_index: 2,
                 amount: 655.0,
             }],
@@ -312,6 +325,8 @@ mod tests {
             save.players[0].ship.position
         );
         assert_eq!(loaded.players[0].ship.cargo, save.players[0].ship.cargo);
+        assert_eq!(loaded.players[0].credits, 640);
+        assert_eq!(loaded.players[0].upgrades.cargo_bay, 2);
         assert_eq!(loaded.asteroids.len(), 1);
         assert_eq!(loaded.asteroids[0].kind, ResourceType::Ice);
         assert_eq!(loaded.planet_deposits[0].config_index, 2);

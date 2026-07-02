@@ -14,8 +14,10 @@ use bevy::prelude::*;
 use bevy::state::app::StatesPlugin;
 
 use space_game::config::{self, GameConfig};
+use space_game::plugins::economy::EconomyPlugin;
 use space_game::plugins::net_server::ServerNetPlugin;
 use space_game::plugins::persistence::PersistencePlugin;
+use space_game::plugins::physics::PhysicsPlugin;
 use space_game::plugins::player::PlayerSimPlugin;
 use space_game::plugins::resources::ResourcesPlugin;
 use space_game::plugins::sim::{enter_playing, SimulationPlugin};
@@ -45,6 +47,8 @@ fn main() {
             PlayerSimPlugin,
             WorldSimPlugin,
             WorldMotionPlugin,
+            PhysicsPlugin,
+            EconomyPlugin,
             ResourcesPlugin,
             PersistencePlugin,
         ))

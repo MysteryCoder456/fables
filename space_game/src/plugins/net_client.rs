@@ -1,5 +1,6 @@
-//! Client-side networking: connects to the server, builds the world from
-//! its `Welcome`, applies per-tick snapshots, and sends local intent.
+//! Client-side networking: connects to the server, builds the universe from
+//! its `Welcome`, applies per-tick snapshots, and sends local intent,
+//! actions and chat.
 //!
 //! The client runs no gameplay simulation. It renders replicated state,
 //! animates the deterministic parts locally (orbits from the replicated sim
@@ -15,22 +16,30 @@ use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender};
 
 use crate::components::{
-    Hull, LocalIntent, LocalShip, MiningRig, NetId, PlayerIntent, PlayerName, PlayerShip,
-    ResourceDeposit, ShipStats, SimClock, SimPosition, SimRotation, SimSet, Velocity,
+    Credits, DeathFlash, Feed, Hull, LocalIntent, LocalShip, MiningRig, NetId, PlayerIntent,
+    PlayerName, PlayerShip, ResourceDeposit, SendAction, SendChat, ShipStats, SimClock,
+    SimPosition, SimRotation, SimSet, Velocity,
 };
 use crate::config::GameConfig;
 use crate::logic::cargo::Cargo;
+use crate::logic::economy::Upgrades;
+use crate::plugins::effects::ImpactFlash;
 use crate::plugins::resources::{DepositExhausted, ResourceMined};
 use crate::plugins::world::{
-    spawn_asteroid, spawn_planet, spawn_star, spawn_system_root, AsteroidInit,
+    spawn_asteroid, spawn_gate, spawn_planet, spawn_star, spawn_system_root, AsteroidInit,
 };
 use crate::protocol::{
-    encode_frame, read_frame, write_frame, ClientToServer, ServerToClient, ShipState, Snapshot,
-    PROTOCOL_VERSION,
+    encode_frame, read_frame, write_frame, AsteroidNetInit, ClientToServer, ServerToClient,
+    ShipState, Snapshot, PROTOCOL_VERSION,
 };
 
 const CONNECT_ATTEMPTS: u32 = 10;
 const CONNECT_RETRY_DELAY: Duration = Duration::from_millis(500);
+/// Position jumps beyond this snap the interpolation buffer (teleports:
+/// respawns and gate jumps must not smear across the map).
+const TELEPORT_SNAP_DISTANCE: f32 = 1500.0;
+/// Seconds the death overlay stays up.
+const DEATH_FLASH_SECS: f32 = 3.0;
 
 pub struct ClientNetPlugin {
     pub server_addr: String,
@@ -43,12 +52,17 @@ impl Plugin for ClientNetPlugin {
         app.insert_resource(net)
             .init_resource::<NetMap>()
             .init_resource::<SnapshotBuffer>()
+            .init_resource::<Feed>()
+            .init_resource::<DeathFlash>()
             .insert_resource(MyShip(None))
-            // The client re-emits these from snapshot events for the
-            // effects systems (no ResourcesPlugin on this side).
+            // Re-emitted from snapshot events for the effects systems
+            // (no ResourcesPlugin/PhysicsPlugin on this side).
             .add_message::<ResourceMined>()
             .add_message::<DepositExhausted>()
+            .add_message::<SendChat>()
+            .add_message::<SendAction>()
             .add_systems(PreUpdate, drain_incoming)
+            .add_systems(Update, relay_outgoing)
             .add_systems(
                 FixedUpdate,
                 (
@@ -70,21 +84,21 @@ struct ClientNet {
     outgoing: Sender<ClientToServer>,
 }
 
-/// NetId -> local entity, split by kind so ship lifecycle (which is driven
-/// by snapshot presence) can't collide with world objects.
+/// NetId -> local entity, split by kind: ships and bolts are presence-keyed
+/// (absent from a snapshot = gone), world objects have explicit lifecycle
+/// events.
 #[derive(Resource, Default)]
 struct NetMap {
     objects: HashMap<NetId, Entity>,
     ships: HashMap<NetId, Entity>,
+    bolts: HashMap<NetId, Entity>,
 }
 
 /// The `NetId` of the ship the server assigned to this client.
 #[derive(Resource)]
 struct MyShip(Option<NetId>);
 
-/// Snapshots received since the last fixed tick. TCP keeps them ordered;
-/// all are applied each tick (events from every one, ship state from the
-/// newest) so backlog self-corrects.
+/// Snapshots received since the last fixed tick.
 #[derive(Resource, Default)]
 struct SnapshotBuffer(VecDeque<Snapshot>);
 
@@ -178,6 +192,8 @@ fn drain_incoming(
     mut map: ResMut<NetMap>,
     mut my_ship: ResMut<MyShip>,
     mut buffer: ResMut<SnapshotBuffer>,
+    mut feed: ResMut<Feed>,
+    mut death_flash: ResMut<DeathFlash>,
     mut next_state: ResMut<NextState<crate::components::GameState>>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -197,49 +213,74 @@ fn drain_incoming(
                 clock.elapsed = sim_elapsed;
                 my_ship.0 = Some(your_ship);
 
-                // Build the world locally: layout comes from shared config,
-                // dynamic state (deposit levels, surviving asteroids) from
-                // the server.
-                let system = spawn_system_root(&mut commands, &config.system.name);
-                spawn_star(&mut commands, system, &config.system.star);
+                // Build the universe locally: layout from shared config,
+                // dynamic state (deposits, surviving asteroids) from the
+                // server.
+                let mut roots = Vec::new();
+                for (system_index, system_cfg) in config.systems.iter().enumerate() {
+                    let center = Vec2::new(system_cfg.center.0, system_cfg.center.1);
+                    let root = spawn_system_root(&mut commands, &system_cfg.name);
+                    spawn_star(&mut commands, root, system_index, &system_cfg.star, center);
+                    for (gate_index, gate_cfg) in system_cfg.gates.iter().enumerate() {
+                        spawn_gate(
+                            &mut commands,
+                            root,
+                            system_index,
+                            gate_index,
+                            gate_cfg,
+                            center,
+                        );
+                    }
+                    roots.push((root, center));
+                }
                 for init in &planets {
-                    let index = init.config_index as usize;
-                    let Some(cfg) = config.system.planets.get(index) else {
-                        warn!("server sent planet {index} not in local config; skipping");
+                    let system_index = init.system_index as usize;
+                    let planet_index = init.planet_index as usize;
+                    let Some(cfg) = config
+                        .systems
+                        .get(system_index)
+                        .and_then(|system| system.planets.get(planet_index))
+                    else {
+                        warn!("server planet {system_index}/{planet_index} not in local config");
+                        continue;
+                    };
+                    let Some((root, center)) = roots.get(system_index).copied() else {
                         continue;
                     };
                     let entity = spawn_planet(
                         &mut commands,
-                        system,
-                        index,
+                        root,
+                        system_index,
+                        planet_index,
                         cfg,
+                        center,
                         init.net_id,
                         init.deposit_amount,
                         sim_elapsed,
                     );
                     map.objects.insert(init.net_id, entity);
                 }
-                for init in &asteroids {
-                    let entity = spawn_asteroid(
-                        &mut commands,
-                        system,
-                        AsteroidInit {
-                            net_id: init.net_id,
-                            position: init.position,
-                            rotation: init.rotation,
-                            size: init.size,
-                            spin: init.spin,
-                            kind: init.kind,
-                            amount: init.amount,
-                            max_amount: init.max_amount,
-                        },
-                    );
-                    map.objects.insert(init.net_id, entity);
+                if let Some((root, _)) = roots.first().copied() {
+                    for init in &asteroids {
+                        let entity = spawn_asteroid_from_net(&mut commands, root, init);
+                        map.objects.insert(init.net_id, entity);
+                    }
                 }
                 next_state.set(crate::components::GameState::Playing);
             }
             ClientEvent::Message(ServerToClient::Snapshot(snapshot)) => {
                 buffer.0.push_back(snapshot);
+            }
+            ClientEvent::Message(ServerToClient::Chat { from, text }) => {
+                feed.push(format!("[{from}] {text}"));
+            }
+            ClientEvent::Message(ServerToClient::Notice(text)) => {
+                feed.push(format!("* {text}"));
+            }
+            ClientEvent::Message(ServerToClient::Died { who }) => {
+                if my_ship.0 == Some(who) {
+                    death_flash.0 = DEATH_FLASH_SECS;
+                }
             }
             ClientEvent::Message(ServerToClient::Reject { reason }) => {
                 error!("server rejected connection: {reason}");
@@ -253,8 +294,29 @@ fn drain_incoming(
     }
 }
 
+fn spawn_asteroid_from_net(
+    commands: &mut Commands,
+    root: Entity,
+    init: &AsteroidNetInit,
+) -> Entity {
+    spawn_asteroid(
+        commands,
+        root,
+        AsteroidInit {
+            net_id: init.net_id,
+            position: init.position,
+            rotation: init.rotation,
+            size: init.size,
+            spin: init.spin,
+            kind: init.kind,
+            amount: init.amount,
+            max_amount: init.max_amount,
+        },
+    )
+}
+
 /// Apply buffered snapshots at the fixed tick: events from every snapshot,
-/// authoritative ship state from the newest.
+/// authoritative ship/bolt state from the newest.
 #[allow(clippy::too_many_arguments)]
 fn apply_snapshots(
     mut commands: Commands,
@@ -262,18 +324,26 @@ fn apply_snapshots(
     mut map: ResMut<NetMap>,
     my_ship: Res<MyShip>,
     mut clock: ResMut<SimClock>,
-    mut ships: Query<(
-        &mut SimPosition,
-        &mut SimRotation,
-        &mut Velocity,
-        &mut Hull,
-        &mut ShipStats,
-        &mut Cargo,
-        &mut PlayerIntent,
-        &mut MiningRig,
-    )>,
+    roots: Query<Entity, With<crate::components::SolarSystem>>,
+    mut ships: Query<
+        (
+            &mut SimPosition,
+            &mut SimRotation,
+            &mut Velocity,
+            &mut Hull,
+            &mut ShipStats,
+            &mut Cargo,
+            &mut Credits,
+            &mut Upgrades,
+            &mut PlayerIntent,
+            &mut MiningRig,
+        ),
+        With<PlayerShip>,
+    >,
+    mut bolts: Query<(&mut SimPosition, &mut Velocity), (Without<PlayerShip>, With<Sprite>)>,
     mut mined_messages: MessageWriter<ResourceMined>,
     mut exhausted_messages: MessageWriter<DepositExhausted>,
+    mut impact_messages: MessageWriter<ImpactFlash>,
     mut deposits: Query<&mut ResourceDeposit>,
 ) {
     if buffer.0.is_empty() {
@@ -282,6 +352,7 @@ fn apply_snapshots(
 
     // Events from every snapshot (they're one-shot and must not be lost).
     let mut snapshots: Vec<Snapshot> = buffer.0.drain(..).collect();
+    let first_root = roots.iter().next();
     for snapshot in &snapshots {
         for update in &snapshot.deposit_updates {
             if let Some(&entity) = map.objects.get(&update.net_id) {
@@ -309,15 +380,27 @@ fn apply_snapshots(
                 kind: event.kind,
             });
         }
+        for init in &snapshot.spawned_asteroids {
+            if map.objects.contains_key(&init.net_id) {
+                continue;
+            }
+            if let Some(root) = first_root {
+                let entity = spawn_asteroid_from_net(&mut commands, root, init);
+                map.objects.insert(init.net_id, entity);
+            }
+        }
+        for impact in &snapshot.impacts {
+            impact_messages.write(ImpactFlash { position: *impact });
+        }
     }
 
-    // Ship state from the newest snapshot only.
+    // Ship + bolt state from the newest snapshot only.
     let newest = snapshots.pop().expect("buffer was non-empty");
     clock.elapsed = newest.sim_elapsed;
 
-    let mut seen: Vec<NetId> = Vec::with_capacity(newest.ships.len());
+    let mut seen_ships: Vec<NetId> = Vec::with_capacity(newest.ships.len());
     for state in &newest.ships {
-        seen.push(state.net_id);
+        seen_ships.push(state.net_id);
         match map.ships.get(&state.net_id) {
             Some(&entity) => {
                 if let Ok((
@@ -327,13 +410,20 @@ fn apply_snapshots(
                     mut hull,
                     mut stats,
                     mut cargo,
+                    mut credits,
+                    mut upgrades,
                     mut intent,
                     mut rig,
                 )) = ships.get_mut(entity)
                 {
-                    // `previous` was already cached this tick; writing only
-                    // `current` keeps render interpolation seamless.
-                    pos.current = state.position;
+                    // Teleports (respawn, gate jump) snap the interpolation
+                    // buffer instead of smearing across the map.
+                    if pos.current.distance(state.position) > TELEPORT_SNAP_DISTANCE {
+                        *pos = SimPosition::new(state.position);
+                        rot.previous = state.rotation;
+                    } else {
+                        pos.current = state.position;
+                    }
                     rot.current = state.rotation;
                     vel.0 = state.velocity;
                     hull.0 = state.hull;
@@ -343,6 +433,8 @@ fn apply_snapshots(
                     if *cargo != state.cargo {
                         *cargo = state.cargo.clone();
                     }
+                    credits.0 = state.credits;
+                    *upgrades = state.upgrades;
                     *intent = state.intent;
                     rig.target = state
                         .mining_target
@@ -359,17 +451,53 @@ fn apply_snapshots(
             }
         }
     }
-
-    // Ships absent from the snapshot have disconnected.
     let mut removed: Vec<NetId> = Vec::new();
     for (&net_id, &entity) in &map.ships {
-        if !seen.contains(&net_id) {
+        if !seen_ships.contains(&net_id) {
             commands.entity(entity).despawn();
             removed.push(net_id);
         }
     }
     for net_id in removed {
         map.ships.remove(&net_id);
+    }
+
+    // Bolts: same presence-keyed lifecycle, tiny bright sprites.
+    let mut seen_bolts: Vec<NetId> = Vec::with_capacity(newest.projectiles.len());
+    for state in &newest.projectiles {
+        seen_bolts.push(state.net_id);
+        match map.bolts.get(&state.net_id) {
+            Some(&entity) => {
+                if let Ok((mut pos, mut vel)) = bolts.get_mut(entity) {
+                    pos.current = state.position;
+                    vel.0 = state.velocity;
+                }
+            }
+            None => {
+                let entity = commands
+                    .spawn((
+                        Name::new("Bolt"),
+                        state.net_id,
+                        SimPosition::new(state.position),
+                        Velocity(state.velocity),
+                        Sprite::from_color(Color::srgb(1.0, 0.95, 0.5), Vec2::new(9.0, 3.0)),
+                        Transform::from_translation(state.position.extend(9.5))
+                            .with_rotation(Quat::from_rotation_z(state.velocity.to_angle())),
+                    ))
+                    .id();
+                map.bolts.insert(state.net_id, entity);
+            }
+        }
+    }
+    let mut removed_bolts: Vec<NetId> = Vec::new();
+    for (&net_id, &entity) in &map.bolts {
+        if !seen_bolts.contains(&net_id) {
+            commands.entity(entity).despawn();
+            removed_bolts.push(net_id);
+        }
+    }
+    for net_id in removed_bolts {
+        map.bolts.remove(&net_id);
     }
 }
 
@@ -387,6 +515,8 @@ fn spawn_replicated_ship(commands: &mut Commands, state: &ShipState, map: &NetMa
             Hull(state.hull),
             state.stats.clone(),
             state.cargo.clone(),
+            Credits(state.credits),
+            state.upgrades,
             MiningRig {
                 target: state
                     .mining_target
@@ -403,7 +533,19 @@ fn spawn_replicated_ship(commands: &mut Commands, state: &ShipState, map: &NetMa
 
 /// Send the local player's intent once per fixed tick.
 fn send_intent(net: Res<ClientNet>, local: Res<LocalIntent>) {
-    // Errors mean the writer thread is gone; `drain_incoming` handles the
-    // disconnect on its next run.
     let _ = net.outgoing.send(ClientToServer::Intent(local.0));
+}
+
+/// Relay chat lines and dock actions the UI queued up.
+fn relay_outgoing(
+    net: Res<ClientNet>,
+    mut chats: MessageReader<SendChat>,
+    mut actions: MessageReader<SendAction>,
+) {
+    for chat in chats.read() {
+        let _ = net.outgoing.send(ClientToServer::Chat(chat.0.clone()));
+    }
+    for action in actions.read() {
+        let _ = net.outgoing.send(ClientToServer::Action(action.0));
+    }
 }

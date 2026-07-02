@@ -21,6 +21,7 @@ impl Plugin for SimulationPlugin {
                     SimSet::CachePrevious,
                     SimSet::NetSync,
                     SimSet::Movement,
+                    SimSet::Physics,
                     SimSet::Mining,
                     SimSet::PostSim,
                 )

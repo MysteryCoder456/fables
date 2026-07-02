@@ -53,6 +53,7 @@ mod tests {
             max_amount: 30.0,
             min_size: 8.0,
             max_size: 20.0,
+            respawn_secs: 0.0,
         }
     }
 

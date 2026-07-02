@@ -7,6 +7,9 @@
 
 pub mod belt;
 pub mod cargo;
+pub mod collision;
+pub mod economy;
+pub mod gravity;
 pub mod mining;
 pub mod orbit;
 pub mod parallax;
