@@ -9,6 +9,7 @@ use crate::components::{
 use crate::config::GameConfig;
 use crate::logic::cargo::Cargo;
 use crate::logic::physics::{step_ship, ShipKinematics, ThrustParams};
+use crate::plugins::persistence::PendingLoad;
 
 pub struct PlayerPlugin;
 
@@ -30,11 +31,37 @@ pub const SHIP_Z: f32 = 10.0;
 fn spawn_player(
     mut commands: Commands,
     config: Res<GameConfig>,
+    pending: Option<Res<PendingLoad>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    let spawn = Vec2::new(config.ship.spawn_position.0, config.ship.spawn_position.1);
-    let stats = config.ship.stats.clone();
+    // Restore the saved ship if one exists, otherwise start from config.
+    let saved = pending
+        .as_ref()
+        .and_then(|pending| pending.0.as_ref())
+        .map(|save| &save.ship);
+
+    let (position, rotation, velocity, hull, stats, cargo) = match saved {
+        Some(ship) => (
+            ship.position,
+            ship.rotation,
+            ship.velocity,
+            ship.hull,
+            ship.stats.clone(),
+            ship.cargo.clone(),
+        ),
+        None => {
+            let stats = config.ship.stats.clone();
+            (
+                Vec2::new(config.ship.spawn_position.0, config.ship.spawn_position.1),
+                std::f32::consts::FRAC_PI_2,
+                Vec2::ZERO,
+                stats.max_hull,
+                stats.clone(),
+                Cargo::new(stats.cargo_capacity),
+            )
+        }
+    };
 
     // Nose points +X at rotation 0, matching the physics convention.
     let hull_mesh = meshes.add(Triangle2d::new(
@@ -46,16 +73,16 @@ fn spawn_player(
     commands.spawn((
         Name::new("Player Ship"),
         PlayerShip,
-        SimPosition::new(spawn),
-        SimRotation::new(std::f32::consts::FRAC_PI_2),
-        Velocity::default(),
-        Hull(stats.max_hull),
-        Cargo::new(stats.cargo_capacity),
+        SimPosition::new(position),
+        SimRotation::new(rotation),
+        Velocity(velocity),
+        Hull(hull),
+        cargo,
         MiningRig::default(),
         stats,
         Mesh2d(hull_mesh),
         MeshMaterial2d(materials.add(Color::srgb(0.85, 0.95, 1.0))),
-        Transform::from_translation(spawn.extend(SHIP_Z)),
+        Transform::from_translation(position.extend(SHIP_Z)),
     ));
 }
 

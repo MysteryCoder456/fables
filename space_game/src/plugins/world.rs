@@ -13,6 +13,8 @@ use crate::config::GameConfig;
 use crate::logic::belt::generate_belt;
 use crate::logic::orbit::{angular_speed, orbit_position};
 use crate::logic::physics::wrap_angle;
+use crate::plugins::persistence::PendingLoad;
+use crate::resource_types::ResourceType;
 
 pub struct WorldPlugin;
 
@@ -31,13 +33,32 @@ const STAR_Z: f32 = 0.0;
 const PLANET_Z: f32 = 1.0;
 const ASTEROID_Z: f32 = 2.0;
 
+/// Everything needed to spawn one asteroid entity (fresh or from a save).
+struct AsteroidInit {
+    position: Vec2,
+    rotation: f32,
+    size: f32,
+    spin: f32,
+    kind: ResourceType,
+    amount: f32,
+    max_amount: f32,
+}
+
 fn spawn_solar_system(
     mut commands: Commands,
     config: Res<GameConfig>,
+    pending: Option<Res<PendingLoad>>,
+    mut clock: ResMut<SimClock>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     let system_cfg = &config.system;
+    let save = pending.as_ref().and_then(|pending| pending.0.as_ref());
+
+    // Restore the sim clock first: planet spawn positions derive from it.
+    if let Some(save) = save {
+        clock.elapsed = save.sim_elapsed;
+    }
 
     let system = commands
         .spawn((
@@ -83,7 +104,13 @@ fn spawn_solar_system(
             angular_speed: angular_speed(planet_cfg.orbit_period),
             phase: planet_cfg.orbit_phase,
         };
-        let start = orbit_position(orbit.center, orbit.radius, orbit.angular_speed, orbit.phase, 0.0);
+        let start = orbit_position(
+            orbit.center,
+            orbit.radius,
+            orbit.angular_speed,
+            orbit.phase,
+            clock.elapsed,
+        );
         let color = Color::srgb(planet_cfg.color.0, planet_cfg.color.1, planet_cfg.color.2);
 
         let mut planet = commands.spawn((
@@ -100,9 +127,18 @@ fn spawn_solar_system(
             ChildOf(system),
         ));
         if let Some(deposit) = &planet_cfg.deposit {
+            // Restore the saved pool level if this planet appears in the save.
+            let amount = save
+                .and_then(|save| {
+                    save.planet_deposits
+                        .iter()
+                        .find(|entry| entry.config_index == index)
+                })
+                .map(|entry| entry.amount.clamp(0.0, deposit.max_amount))
+                .unwrap_or(deposit.max_amount);
             planet.insert(ResourceDeposit {
                 kind: deposit.kind,
-                amount: deposit.max_amount,
+                amount,
                 max_amount: deposit.max_amount,
                 regen_per_sec: deposit.regen_per_sec,
             });
@@ -122,36 +158,82 @@ fn spawn_solar_system(
     }
 
     // --- Asteroid belts ---
-    for belt_cfg in &system_cfg.belts {
-        for spawn in generate_belt(belt_cfg) {
-            let tint = spawn.kind.color().to_srgba();
-            // Darken toward gray so belts read as rock with a resource hue.
-            let rock_color = Color::srgb(
-                tint.red * 0.45 + 0.15,
-                tint.green * 0.45 + 0.15,
-                tint.blue * 0.45 + 0.15,
-            );
-            let sides = 5 + (spawn.size as u32 % 4);
-            commands.spawn((
-                Name::new("Asteroid"),
-                Asteroid { size: spawn.size },
-                BodyRadius(spawn.size),
-                ResourceDeposit {
-                    kind: spawn.kind,
-                    amount: spawn.amount,
-                    max_amount: spawn.amount,
-                    regen_per_sec: 0.0,
+    // Fresh worlds generate belts from config seeds; saved worlds restore
+    // the surviving asteroids by value (mined-out rocks stay gone).
+    if let Some(save) = save {
+        for saved in &save.asteroids {
+            spawn_asteroid(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                system,
+                AsteroidInit {
+                    position: saved.position,
+                    rotation: saved.rotation,
+                    size: saved.size,
+                    spin: saved.spin,
+                    kind: saved.kind,
+                    amount: saved.amount,
+                    max_amount: saved.max_amount,
                 },
-                Spin(spawn.spin),
-                SimPosition::new(spawn.position),
-                SimRotation::new(0.0),
-                Mesh2d(meshes.add(RegularPolygon::new(spawn.size, sides))),
-                MeshMaterial2d(materials.add(rock_color)),
-                Transform::from_translation(spawn.position.extend(ASTEROID_Z)),
-                ChildOf(system),
-            ));
+            );
+        }
+    } else {
+        for belt_cfg in &system_cfg.belts {
+            for spawn in generate_belt(belt_cfg) {
+                spawn_asteroid(
+                    &mut commands,
+                    &mut meshes,
+                    &mut materials,
+                    system,
+                    AsteroidInit {
+                        position: spawn.position,
+                        rotation: 0.0,
+                        size: spawn.size,
+                        spin: spawn.spin,
+                        kind: spawn.kind,
+                        amount: spawn.amount,
+                        max_amount: spawn.amount,
+                    },
+                );
+            }
         }
     }
+}
+
+fn spawn_asteroid(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<ColorMaterial>,
+    system: Entity,
+    init: AsteroidInit,
+) {
+    let tint = init.kind.color().to_srgba();
+    // Darken toward gray so belts read as rock with a resource hue.
+    let rock_color = Color::srgb(
+        tint.red * 0.45 + 0.15,
+        tint.green * 0.45 + 0.15,
+        tint.blue * 0.45 + 0.15,
+    );
+    let sides = 5 + (init.size as u32 % 4);
+    commands.spawn((
+        Name::new("Asteroid"),
+        Asteroid { size: init.size },
+        BodyRadius(init.size),
+        ResourceDeposit {
+            kind: init.kind,
+            amount: init.amount,
+            max_amount: init.max_amount,
+            regen_per_sec: 0.0,
+        },
+        Spin(init.spin),
+        SimPosition::new(init.position),
+        SimRotation::new(init.rotation),
+        Mesh2d(meshes.add(RegularPolygon::new(init.size, sides))),
+        MeshMaterial2d(materials.add(rock_color)),
+        Transform::from_translation(init.position.extend(ASTEROID_Z)),
+        ChildOf(system),
+    ));
 }
 
 /// Planets follow their orbit as a pure function of the sim clock.
