@@ -15,8 +15,8 @@ use bevy::prelude::*;
 
 use config::GameConfig;
 use plugins::{
-    camera::GameCameraPlugin, player::PlayerPlugin, sim::SimulationPlugin, visuals::VisualsPlugin,
-    world::WorldPlugin,
+    camera::GameCameraPlugin, player::PlayerPlugin, resources::ResourcesPlugin,
+    sim::SimulationPlugin, ui::UiPlugin, visuals::VisualsPlugin, world::WorldPlugin,
 };
 
 fn main() {
@@ -31,8 +31,8 @@ fn main() {
         .insert_resource(ClearColor(Color::srgb(0.02, 0.02, 0.05)))
         .insert_resource(GameConfig::load_or_default(config::CONFIG_PATH))
         // Simulation plugins (a headless server would run these).
-        .add_plugins((SimulationPlugin, PlayerPlugin, WorldPlugin))
+        .add_plugins((SimulationPlugin, PlayerPlugin, WorldPlugin, ResourcesPlugin))
         // Client-only plugins.
-        .add_plugins((GameCameraPlugin, VisualsPlugin))
+        .add_plugins((GameCameraPlugin, VisualsPlugin, UiPlugin))
         .run();
 }

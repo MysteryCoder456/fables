@@ -6,6 +6,8 @@
 
 pub mod camera;
 pub mod player;
+pub mod resources;
 pub mod sim;
+pub mod ui;
 pub mod visuals;
 pub mod world;

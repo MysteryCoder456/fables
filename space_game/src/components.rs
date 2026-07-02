@@ -188,8 +188,10 @@ pub struct ResourceDeposit {
 }
 
 impl ResourceDeposit {
+    /// True when this deposit can never yield another whole unit: less than
+    /// one unit left and no regeneration.
     pub fn is_exhausted(&self) -> bool {
-        self.amount <= f32::EPSILON && self.regen_per_sec <= 0.0
+        self.amount < 1.0 && self.regen_per_sec <= 0.0
     }
 }
 

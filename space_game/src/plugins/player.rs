@@ -3,9 +3,11 @@
 use bevy::prelude::*;
 
 use crate::components::{
-    Hull, PlayerIntent, PlayerShip, ShipStats, SimPosition, SimRotation, SimSet, Velocity,
+    Hull, MiningRig, PlayerIntent, PlayerShip, ShipStats, SimPosition, SimRotation, SimSet,
+    Velocity,
 };
 use crate::config::GameConfig;
+use crate::logic::cargo::Cargo;
 use crate::logic::physics::{step_ship, ShipKinematics, ThrustParams};
 
 pub struct PlayerPlugin;
@@ -48,6 +50,8 @@ fn spawn_player(
         SimRotation::new(std::f32::consts::FRAC_PI_2),
         Velocity::default(),
         Hull(stats.max_hull),
+        Cargo::new(stats.cargo_capacity),
+        MiningRig::default(),
         stats,
         Mesh2d(hull_mesh),
         MeshMaterial2d(materials.add(Color::srgb(0.85, 0.95, 1.0))),

@@ -6,6 +6,8 @@
 //! server.
 
 pub mod belt;
+pub mod cargo;
+pub mod mining;
 pub mod orbit;
 pub mod parallax;
 pub mod physics;
