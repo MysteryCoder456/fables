@@ -427,7 +427,7 @@ fn handle_deaths(
     >,
     mut destroyed: MessageWriter<ShipDestroyed>,
 ) {
-    let spawn = Vec2::new(config.ship.spawn_position.0, config.ship.spawn_position.1);
+    let (spawn, spawn_rot, spawn_vel) = config.spawn_kinematics();
     for (
         net_id,
         name,
@@ -454,12 +454,13 @@ fn handle_deaths(
             .filter(|_| clock.elapsed - damager.at < KILL_ATTRIBUTION_SECS);
 
         // Ship is destroyed: cargo scattered to the void, pilot wakes up in
-        // a fresh hull back home. Credits and upgrades survive.
+        // a fresh hull back home — parked in the spawn orbit, not in
+        // free-fall. Credits and upgrades survive.
         *cargo = Cargo::new(cargo.capacity());
         hull.0 = stats.max_hull;
         *pos = SimPosition::new(spawn);
-        *rot = SimRotation::new(std::f32::consts::FRAC_PI_2);
-        vel.0 = Vec2::ZERO;
+        *rot = SimRotation::new(spawn_rot);
+        vel.0 = spawn_vel;
         rig.target = None;
         rig.progress = 0.0;
         shield.0 = config.physics.respawn_shield_secs;

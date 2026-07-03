@@ -212,6 +212,8 @@ fn drain_incoming(
                 );
                 clock.elapsed = sim_elapsed;
                 my_ship.0 = Some(your_ship);
+                feed.push("* tip: you start in orbit: thrust (W) to climb away".into());
+                feed.push("* tip: hold Space near rocks to mine, dock at planets to sell".into());
 
                 // Build the universe locally: layout from shared config,
                 // dynamic state (deposits, surviving asteroids) from the

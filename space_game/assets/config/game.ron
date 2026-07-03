@@ -4,7 +4,7 @@
 //   cargo test regenerate_shipped_config -- --ignored
 (
     ship: (
-        spawn_position: (0.0, -1400.0),
+        spawn_position: (0.0, -2600.0),
         docking_range: 160.0,
         stats: (
             max_hull: 100.0,
@@ -14,7 +14,7 @@
             thrust_accel: 320.0,
             turn_speed: 3.4,
             max_speed: 700.0,
-            drag: 0.08,
+            drag: 0.02,
         ),
     ),
     physics: (
@@ -39,7 +39,7 @@
                 name: "Helios",
                 radius: 300.0,
                 color: (1.0, 0.85, 0.45),
-                gravity_mu: 60000000.0,
+                gravity_mu: 35000000.0,
             ),
             planets: [
                 (
@@ -253,7 +253,7 @@
                 name: "Cryon",
                 radius: 220.0,
                 color: (0.65, 0.78, 1.0),
-                gravity_mu: 35000000.0,
+                gravity_mu: 22000000.0,
             ),
             planets: [
                 (

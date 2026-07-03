@@ -141,6 +141,30 @@ pub struct GateConfig {
 }
 
 impl GameConfig {
+    /// Where and how new (and destroyed) pilots appear: position, rotation
+    /// and velocity of a stable circular orbit around the home star, facing
+    /// prograde. Spawning *in orbit* means an idle new player circles the
+    /// star gracefully instead of plummeting into it, and thrusting forward
+    /// raises the orbit — away from the sun, never into it.
+    pub fn spawn_kinematics(&self) -> (Vec2, f32, Vec2) {
+        let position = Vec2::new(self.ship.spawn_position.0, self.ship.spawn_position.1);
+        let Some(home) = self.systems.first() else {
+            return (position, std::f32::consts::FRAC_PI_2, Vec2::ZERO);
+        };
+        let center = Vec2::new(home.center.0, home.center.1);
+        let radial = position - center;
+        let radius = radial.length();
+        if radius < f32::EPSILON {
+            return (position, std::f32::consts::FRAC_PI_2, Vec2::ZERO);
+        }
+        let speed = crate::logic::gravity::circular_orbit_speed(home.star.gravity_mu, radius);
+        // Counter-clockwise orbit: velocity is the CCW perpendicular of the
+        // outward radial, matching the planets' direction of travel.
+        let velocity = Vec2::new(-radial.y, radial.x) / radius * speed;
+        let rotation = velocity.to_angle();
+        (position, rotation, velocity)
+    }
+
     /// Load from `path`, falling back to built-in defaults on any error.
     pub fn load_or_default(path: &str) -> Self {
         match std::fs::read_to_string(path) {
@@ -187,7 +211,9 @@ impl Default for GameConfig {
     fn default() -> Self {
         Self {
             ship: ShipConfig {
-                spawn_position: (0.0, -1400.0),
+                // New pilots start on the inner edge of the first asteroid
+                // belt, in a stable orbit, with mining targets in view.
+                spawn_position: (0.0, -2600.0),
                 docking_range: 160.0,
                 stats: ShipStats {
                     max_hull: 100.0,
@@ -197,9 +223,9 @@ impl Default for GameConfig {
                     thrust_accel: 320.0,
                     turn_speed: 3.4,
                     max_speed: 700.0,
-                    // Low drag so gravity assists and orbits feel real;
-                    // brake for fine control.
-                    drag: 0.08,
+                    // Nearly no drag: spawn orbits stay stable for minutes
+                    // and gravity assists feel real. Brake for control.
+                    drag: 0.02,
                 },
             },
             physics: PhysicsConfig {
@@ -230,7 +256,9 @@ fn helios() -> SolarSystemConfig {
             name: "Helios".into(),
             radius: 300.0,
             color: (1.0, 0.85, 0.45),
-            gravity_mu: 6.0e7,
+            // Strong enough to bend trajectories and hold orbits, weak
+            // enough that full thrust out-pulls it 20:1 at the spawn belt.
+            gravity_mu: 3.5e7,
         },
         planets: vec![
             PlanetConfig {
@@ -354,7 +382,7 @@ fn cryon() -> SolarSystemConfig {
             name: "Cryon".into(),
             radius: 220.0,
             color: (0.65, 0.78, 1.0),
-            gravity_mu: 3.5e7,
+            gravity_mu: 2.2e7,
         },
         planets: vec![
             PlanetConfig {
@@ -489,6 +517,40 @@ mod tests {
                 assert_eq!(planet.market.len(), 4, "every planet trades everything");
             }
         }
+    }
+
+    /// New pilots must start on a genuinely stable circular orbit: the
+    /// centripetal acceleration of the spawn velocity has to match the
+    /// star's gravity at the spawn radius, and the ship must face prograde.
+    #[test]
+    fn spawn_orbit_is_stable_and_prograde() {
+        let config = GameConfig::default();
+        let (position, rotation, velocity) = config.spawn_kinematics();
+
+        let home = &config.systems[0];
+        let center = Vec2::new(home.center.0, home.center.1);
+        let radial = position - center;
+        let radius = radial.length();
+
+        // v²/r == mu/r² (circular orbit condition).
+        let centripetal = velocity.length_squared() / radius;
+        let gravity = home.star.gravity_mu / (radius * radius);
+        assert!(
+            (centripetal - gravity).abs() / gravity < 1e-4,
+            "spawn velocity is not a circular orbit"
+        );
+
+        // Velocity is tangential (no radial component) and CCW.
+        assert!(velocity.dot(radial).abs() / (velocity.length() * radius) < 1e-4);
+        assert!(radial.perp_dot(velocity) > 0.0, "orbit should be CCW");
+
+        // The nose points along the velocity (prograde), so thrusting
+        // forward raises the orbit instead of diving sunward.
+        let facing = Vec2::from_angle(rotation);
+        assert!(facing.dot(velocity.normalize()) > 0.999);
+
+        // And full thrust dominates local gravity by a wide margin.
+        assert!(config.ship.stats.thrust_accel > gravity * 10.0);
     }
 
     #[test]

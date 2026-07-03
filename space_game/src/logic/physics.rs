@@ -2,8 +2,9 @@
 
 use bevy::math::Vec2;
 
-/// Extra drag multiplier applied while braking.
-const BRAKE_DRAG_FACTOR: f32 = 8.0;
+/// Extra drag multiplier applied while braking. Base drag is nearly zero
+/// (so orbits persist), so braking brings most of the stopping power.
+const BRAKE_DRAG_FACTOR: f32 = 150.0;
 
 /// Mutable kinematic state of a ship for one integration step.
 #[derive(Debug, Clone, Copy, PartialEq)]

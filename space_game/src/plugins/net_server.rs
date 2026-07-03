@@ -392,13 +392,17 @@ fn spawn_player_ship(
             saved.ship.hull.min(stats.max_hull),
             saved.ship.cargo.clone(),
         ),
-        None => (
-            Vec2::new(config.ship.spawn_position.0, config.ship.spawn_position.1),
-            std::f32::consts::FRAC_PI_2,
-            Vec2::ZERO,
-            stats.max_hull,
-            Cargo::new(stats.cargo_capacity),
-        ),
+        None => {
+            // Fresh pilots start in a stable orbit, facing prograde.
+            let (position, rotation, velocity) = config.spawn_kinematics();
+            (
+                position,
+                rotation,
+                velocity,
+                stats.max_hull,
+                Cargo::new(stats.cargo_capacity),
+            )
+        }
     };
 
     commands
