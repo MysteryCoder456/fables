@@ -363,7 +363,8 @@ impl Store {
         tx.commit()?;
 
         let base = self.get_page(&page_id)?.map(|p| p.last_edited_time);
-        let op_payload = json!({"block_type": block_type, "block_payload": new_payload}).to_string();
+        let op_payload =
+            json!({"page_id": page_id, "block_type": block_type, "block_payload": new_payload}).to_string();
         let op_seq = self.enqueue_op("update_block", block_id, &op_payload, base.as_deref())?;
 
         Ok(EditReceipt {
@@ -397,7 +398,8 @@ impl Store {
         tx.commit()?;
 
         let base = self.get_page(&page_id)?.map(|p| p.last_edited_time);
-        let op_payload = json!({"block_type": block_type, "block_payload": new_payload}).to_string();
+        let op_payload =
+            json!({"page_id": page_id, "block_type": block_type, "block_payload": new_payload}).to_string();
         let op_seq = self.enqueue_op("update_block", block_id, &op_payload, base.as_deref())?;
 
         Ok(EditReceipt {

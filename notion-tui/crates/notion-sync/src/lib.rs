@@ -1,4 +1,5 @@
 mod puller;
+mod pusher;
 
 use std::sync::{Arc, Mutex};
 
@@ -19,3 +20,4 @@ pub struct SyncHandle {
 }
 
 pub use puller::{pull_once, spawn_puller};
+pub use pusher::push_once;
