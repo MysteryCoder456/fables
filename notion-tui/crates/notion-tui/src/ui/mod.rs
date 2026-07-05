@@ -1,3 +1,4 @@
+pub mod page;
 pub mod sidebar;
 
 use ratatui::layout::{Constraint, Direction, Layout};
@@ -5,7 +6,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
-use crate::app::{App, Focus};
+use crate::app::{App, Focus, View};
 use notion_sync::SyncStatus;
 
 pub fn status_line(status: &SyncStatus) -> String {
@@ -39,7 +40,11 @@ pub fn draw(f: &mut Frame, app: &App) {
         sidebar::render(f, cols[0], &app.sidebar, matches!(app.focus, Focus::Sidebar));
     }
     let main_area = *cols.last().unwrap();
-    f.render_widget(Block::default().borders(Borders::ALL), main_area);
+    let main_focused = matches!(app.focus, Focus::Main);
+    match &app.view {
+        View::Page(view) => page::render(f, main_area, view, main_focused),
+        View::Empty => f.render_widget(Block::default().borders(Borders::ALL), main_area),
+    }
 
     f.render_widget(
         Paragraph::new(status_line(&app.sync_status))

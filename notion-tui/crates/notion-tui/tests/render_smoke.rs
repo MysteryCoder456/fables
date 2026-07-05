@@ -42,3 +42,46 @@ fn renders_sidebar_tree() {
     term.draw(|f| ui::draw(f, &app)).unwrap();
     insta::assert_snapshot!(term.backend());
 }
+
+#[test]
+fn renders_page_view() {
+    use notion_store::{BlockRec, PageRec};
+    use notion_tui::app::{Focus, View};
+    use notion_tui::ui::page::PageView;
+
+    let mut app = App::new();
+    app.focus = Focus::Main;
+    app.sync_status = notion_sync::SyncStatus::Idle { updated: 0 };
+    let page_rec = PageRec {
+        id: "p1".into(),
+        parent_type: "workspace".into(),
+        parent_id: None,
+        title: "Roadmap".into(),
+        icon: None,
+        archived: false,
+        last_edited_time: "t".into(),
+    };
+    let blocks = vec![
+        BlockRec {
+            id: "h1".into(), page_id: "p1".into(), parent_block_id: None, ordinal: 0,
+            block_type: "heading_1".into(), payload: "{}".into(),
+            plain_text: "Q3 Plan".into(), has_children: false,
+        },
+        BlockRec {
+            id: "t1".into(), page_id: "p1".into(), parent_block_id: None, ordinal: 1,
+            block_type: "to_do".into(), payload: r#"{"checked": false}"#.into(),
+            plain_text: "Ship it".into(), has_children: false,
+        },
+        BlockRec {
+            id: "cp".into(), page_id: "p1".into(), parent_block_id: None, ordinal: 2,
+            block_type: "child_page".into(), payload: "{}".into(),
+            plain_text: "Sub page".into(), has_children: false,
+        },
+    ];
+    app.view = View::Page(PageView::new(page_rec, blocks));
+
+    let backend = TestBackend::new(60, 12);
+    let mut term = Terminal::new(backend).unwrap();
+    term.draw(|f| ui::draw(f, &app)).unwrap();
+    insta::assert_snapshot!(term.backend());
+}

@@ -1,0 +1,17 @@
+---
+source: crates/notion-tui/tests/render_smoke.rs
+assertion_line: 86
+expression: term.backend()
+---
+"┌ notion ──────────────────┐┌ Roadmap ─────────────────────┐"
+"│                          ││# Q3 Plan                     │"
+"│                          ││[ ] Ship it                   │"
+"│                          ││→ Sub page                    │"
+"│                          ││                              │"
+"│                          ││                              │"
+"│                          ││                              │"
+"│                          ││                              │"
+"│                          ││                              │"
+"│                          ││                              │"
+"└──────────────────────────┘└──────────────────────────────┘"
+"✓ synced                                                    "
