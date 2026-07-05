@@ -1,3 +1,4 @@
+pub mod input;
 pub mod page;
 pub mod search;
 pub mod sidebar;
@@ -62,6 +63,9 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     if let Some(search_state) = &app.search {
         search::render(f, search_state);
+    }
+    if let Some(input_state) = &app.input {
+        input::render(f, input_state);
     }
 }
 

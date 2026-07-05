@@ -2,6 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use notion_store::{NodeKind, TreeNode};
 use notion_sync::{SharedStore, SyncStatus};
 
+use crate::ui::input::{InputAction, InputState};
 use crate::ui::page::PageView;
 use crate::ui::search::{SearchAction, SearchState};
 use crate::ui::sidebar::SidebarState;
@@ -27,6 +28,11 @@ pub enum Action {
     Undo,
 }
 
+pub enum InputPurpose {
+    EditBlockText { block_id: String },
+    InsertBlockAfter { page_id: String, after_block_id: Option<String> },
+}
+
 pub struct App {
     pub focus: Focus,
     pub sync_status: SyncStatus,
@@ -35,6 +41,8 @@ pub struct App {
     pub view: View,
     pub history: Vec<String>,
     pub search: Option<SearchState>,
+    pub input: Option<InputState>,
+    pub input_purpose: Option<InputPurpose>,
     pub pending: u32,
     pub pending_d: bool,
     pub undo_stack: Vec<notion_store::EditReceipt>,
@@ -51,6 +59,8 @@ impl App {
             view: View::Empty,
             history: Vec::new(),
             search: None,
+            input: None,
+            input_purpose: None,
             pending: 0,
             pending_d: false,
             undo_stack: Vec::new(),
@@ -78,6 +88,22 @@ impl App {
             self.refresh_current_view();
             self.refresh_sidebar();
         }
+    }
+
+    pub fn edit_block_text(&mut self, block_id: &str, text: &str) {
+        if let Ok(receipt) = self.store.lock().unwrap().edit_update_block_text(block_id, text) {
+            self.undo_stack.push(receipt);
+        }
+        self.refresh_current_view();
+    }
+
+    pub fn insert_block(&mut self, page_id: &str, after: Option<&str>, text: &str) {
+        if let Ok((_, receipt)) =
+            self.store.lock().unwrap().edit_insert_block_after(page_id, after, "paragraph", text)
+        {
+            self.undo_stack.push(receipt);
+        }
+        self.refresh_current_view();
     }
 
     pub fn refresh_sidebar(&mut self) {
@@ -262,6 +288,28 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
 /// `handle_key`'s Action against the store otherwise, and owns the '/' /
 /// Ctrl+P shortcuts that open search from any focus.
 pub fn dispatch_key(app: &mut App, key: KeyEvent) {
+    if app.input.is_some() {
+        let action = app.input.as_mut().unwrap().on_key(key);
+        match action {
+            InputAction::None | InputAction::Changed => {}
+            InputAction::Cancel => {
+                app.input = None;
+                app.input_purpose = None;
+            }
+            InputAction::Submit(text) => {
+                if let Some(purpose) = app.input_purpose.take() {
+                    match purpose {
+                        InputPurpose::EditBlockText { block_id } => app.edit_block_text(&block_id, &text),
+                        InputPurpose::InsertBlockAfter { page_id, after_block_id } => {
+                            app.insert_block(&page_id, after_block_id.as_deref(), &text)
+                        }
+                    }
+                }
+                app.input = None;
+            }
+        }
+        return;
+    }
     if app.search.is_some() {
         let action = app.search.as_mut().unwrap().on_key(key);
         match action {
@@ -280,6 +328,30 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     if opens_search {
         app.search = Some(SearchState::new());
         return;
+    }
+    if matches!(app.focus, Focus::Main) {
+        if let View::Page(view) = &app.view {
+            if key.code == KeyCode::Char('i') {
+                if let Some(block_id) = view.block_id_at_cursor() {
+                    let initial = view
+                        .blocks
+                        .iter()
+                        .find(|b| b.id == block_id)
+                        .map(|b| b.plain_text.clone())
+                        .unwrap_or_default();
+                    app.input = Some(InputState::new("edit block", initial));
+                    app.input_purpose = Some(InputPurpose::EditBlockText { block_id });
+                    return;
+                }
+            }
+            if key.code == KeyCode::Char('a') {
+                let page_id = view.page.id.clone();
+                let after = view.block_id_at_cursor();
+                app.input = Some(InputState::new("new block", ""));
+                app.input_purpose = Some(InputPurpose::InsertBlockAfter { page_id, after_block_id: after });
+                return;
+            }
+        }
     }
     match handle_key(app, key) {
         Action::None => {}
