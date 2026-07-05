@@ -1,0 +1,23 @@
+[package]
+name = "notion-tui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+notion-api = { path = "../notion-api" }
+notion-store = { path = "../notion-store" }
+notion-sync = { path = "../notion-sync" }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+dirs = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+wiremock = { workspace = true }
+tempfile = { workspace = true }
