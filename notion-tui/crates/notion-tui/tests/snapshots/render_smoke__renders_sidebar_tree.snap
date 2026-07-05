@@ -1,12 +1,12 @@
 ---
 source: crates/notion-tui/tests/render_smoke.rs
-assertion_line: 12
+assertion_line: 43
 expression: term.backend()
 ---
 "┌ notion ● ────────────────┐┌──────────────────────────────┐"
-"│                          ││                              │"
-"│                          ││                              │"
-"│                          ││                              │"
+"│▸ Roadmap                 ││                              │"
+"│▸ Notes                   ││                              │"
+"│▦ Tasks                   ││                              │"
 "│                          ││                              │"
 "│                          ││                              │"
 "│                          ││                              │"

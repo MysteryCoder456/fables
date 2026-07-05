@@ -1,9 +1,11 @@
+pub mod sidebar;
+
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
-use crate::app::App;
+use crate::app::{App, Focus};
 use notion_sync::SyncStatus;
 
 pub fn status_line(status: &SyncStatus) -> String {
@@ -22,13 +24,23 @@ pub fn draw(f: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(f.area());
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(28), Constraint::Min(1)])
-        .split(rows[0]);
 
-    f.render_widget(Block::default().borders(Borders::ALL).title(" notion "), cols[0]);
-    f.render_widget(Block::default().borders(Borders::ALL), cols[1]);
+    let cols: Vec<ratatui::layout::Rect> = if app.sidebar.hidden {
+        vec![rows[0]]
+    } else {
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(28), Constraint::Min(1)])
+            .split(rows[0])
+            .to_vec()
+    };
+
+    if !app.sidebar.hidden {
+        sidebar::render(f, cols[0], &app.sidebar, matches!(app.focus, Focus::Sidebar));
+    }
+    let main_area = *cols.last().unwrap();
+    f.render_widget(Block::default().borders(Borders::ALL), main_area);
+
     f.render_widget(
         Paragraph::new(status_line(&app.sync_status))
             .style(Style::default().add_modifier(Modifier::REVERSED)),

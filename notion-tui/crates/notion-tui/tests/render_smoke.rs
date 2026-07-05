@@ -19,3 +19,26 @@ fn q_quits() {
     notion_tui::app::handle_key(&mut app, KeyEvent::from(KeyCode::Char('q')));
     assert!(app.should_quit);
 }
+
+#[test]
+fn renders_sidebar_tree() {
+    use notion_store::{NodeKind, TreeNode};
+    use notion_tui::ui::sidebar::SidebarState;
+
+    let mut app = App::new();
+    app.sync_status = notion_sync::SyncStatus::Idle { updated: 0 };
+    app.sidebar = SidebarState::new(vec![
+        TreeNode { id: "p1".into(), title: "Roadmap".into(), parent_id: None, kind: NodeKind::Page },
+        TreeNode { id: "p2".into(), title: "Notes".into(), parent_id: None, kind: NodeKind::Page },
+        TreeNode {
+            id: "ds1".into(),
+            title: "Tasks".into(),
+            parent_id: None,
+            kind: NodeKind::DataSource,
+        },
+    ]);
+    let backend = TestBackend::new(60, 12);
+    let mut term = Terminal::new(backend).unwrap();
+    term.draw(|f| ui::draw(f, &app)).unwrap();
+    insta::assert_snapshot!(term.backend());
+}
