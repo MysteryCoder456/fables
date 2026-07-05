@@ -56,6 +56,10 @@ pub async fn pull_once(client: &NotionClient, store: &SharedStore) -> Result<u32
                             last_edited_time: p.last_edited_time.clone(),
                         })
                         .ok();
+                    let dirty = store.lock().unwrap().is_page_dirty(&p.id).unwrap_or(false);
+                    if dirty {
+                        continue;
+                    }
                     let flat = client.fetch_block_tree(&p.id).await?;
                     let recs: Vec<BlockRec> = flat
                         .iter()

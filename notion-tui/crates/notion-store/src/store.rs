@@ -33,7 +33,8 @@ impl Store {
             "INSERT INTO pages (id, parent_type, parent_id, title, icon, archived, last_edited_time)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(id) DO UPDATE SET parent_type=?2, parent_id=?3, title=?4, icon=?5,
-                                           archived=?6, last_edited_time=?7",
+                                           archived=?6, last_edited_time=?7
+             WHERE dirty = 0",
             rusqlite::params![
                 p.id,
                 p.parent_type,
@@ -86,11 +87,17 @@ impl Store {
 
     pub fn replace_rows(&mut self, data_source_id: &str, rows: &[RowRec]) -> anyhow::Result<()> {
         let tx = self.conn.transaction()?;
-        tx.execute("DELETE FROM rows WHERE data_source_id = ?1", [data_source_id])?;
+        tx.execute(
+            "DELETE FROM rows WHERE data_source_id = ?1 AND dirty = 0",
+            [data_source_id],
+        )?;
         {
             let mut stmt = tx.prepare(
                 "INSERT INTO rows (id, data_source_id, properties, last_edited_time, archived)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(id) DO UPDATE SET data_source_id=?2, properties=?3,
+                                               last_edited_time=?4, archived=?5
+                 WHERE dirty = 0",
             )?;
             for r in rows {
                 stmt.execute(rusqlite::params![
