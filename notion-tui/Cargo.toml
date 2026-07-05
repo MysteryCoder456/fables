@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = ["crates/notion-api"]
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }
+futures = "0.3"
+dirs = "5"
+toml = "0.8"
+wiremock = "0.6"
+insta = "1"
+tempfile = "3"
