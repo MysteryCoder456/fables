@@ -573,7 +573,135 @@ impl Store {
                     ],
                 )?;
             }
+            Inverse::DeleteInsertedRow { row_id } => {
+                self.conn.execute("DELETE FROM rows WHERE id = ?1", [row_id])?;
+            }
+            Inverse::UpdateRowProperties { row_id, old_properties, .. } => {
+                self.conn.execute(
+                    "UPDATE rows SET properties = ?2 WHERE id = ?1",
+                    rusqlite::params![row_id, old_properties],
+                )?;
+            }
+            Inverse::RestoreRow { row_id } => {
+                self.conn.execute("UPDATE rows SET archived = 0 WHERE id = ?1", [row_id])?;
+            }
         }
+        Ok(())
+    }
+
+    pub fn is_row_dirty(&self, row_id: &str) -> anyhow::Result<bool> {
+        let dirty: i64 =
+            self.conn
+                .query_row("SELECT dirty FROM rows WHERE id = ?1", [row_id], |r| r.get(0))?;
+        Ok(dirty != 0)
+    }
+
+    pub fn clear_row_dirty(&self, row_id: &str) -> anyhow::Result<()> {
+        self.conn.execute("UPDATE rows SET dirty = 0 WHERE id = ?1", [row_id])?;
+        Ok(())
+    }
+
+    pub fn edit_create_row(
+        &mut self,
+        data_source_id: &str,
+        properties: Value,
+    ) -> anyhow::Result<(String, EditReceipt)> {
+        let row_id = format!(
+            "tmp-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let props_str = properties.to_string();
+
+        self.conn.execute(
+            "INSERT INTO rows (id, data_source_id, properties, last_edited_time, archived, dirty)
+             VALUES (?1, ?2, ?3, '', 0, 1)",
+            rusqlite::params![row_id, data_source_id, props_str],
+        )?;
+
+        let op_payload = json!({"data_source_id": data_source_id, "properties": properties}).to_string();
+        let op_seq = self.enqueue_op("create_row", &row_id, &op_payload, None)?;
+
+        let receipt = EditReceipt {
+            op_seq,
+            inverse: Inverse::DeleteInsertedRow { row_id: row_id.clone() },
+        };
+        Ok((row_id, receipt))
+    }
+
+    pub fn edit_update_row(&mut self, row_id: &str, patch: Value) -> anyhow::Result<EditReceipt> {
+        let (data_source_id, old_properties, base): (String, String, String) = self.conn.query_row(
+            "SELECT data_source_id, properties, last_edited_time FROM rows WHERE id = ?1",
+            [row_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        let mut merged: Value = serde_json::from_str(&old_properties).unwrap_or_else(|_| json!({}));
+        if let (Value::Object(ref mut map), Value::Object(patch_map)) = (&mut merged, &patch) {
+            for (k, v) in patch_map {
+                map.insert(k.clone(), v.clone());
+            }
+        }
+        let new_properties = merged.to_string();
+
+        self.conn.execute(
+            "UPDATE rows SET properties = ?2, dirty = 1 WHERE id = ?1",
+            rusqlite::params![row_id, new_properties],
+        )?;
+
+        let op_payload = json!({"properties": patch}).to_string();
+        let op_seq = self.enqueue_op("update_row", row_id, &op_payload, Some(&base))?;
+
+        Ok(EditReceipt {
+            op_seq,
+            inverse: Inverse::UpdateRowProperties {
+                row_id: row_id.to_string(),
+                data_source_id,
+                old_properties,
+            },
+        })
+    }
+
+    pub fn edit_delete_row(&mut self, row_id: &str) -> anyhow::Result<EditReceipt> {
+        let base: String = self
+            .conn
+            .query_row("SELECT last_edited_time FROM rows WHERE id = ?1", [row_id], |r| r.get(0))?;
+
+        self.conn
+            .execute("UPDATE rows SET archived = 1, dirty = 1 WHERE id = ?1", [row_id])?;
+
+        let op_seq = self.enqueue_op("delete_row", row_id, "{}", Some(&base))?;
+
+        Ok(EditReceipt {
+            op_seq,
+            inverse: Inverse::RestoreRow { row_id: row_id.to_string() },
+        })
+    }
+
+    pub fn rewrite_row_id(&mut self, old_id: &str, new_id: &str) -> anyhow::Result<()> {
+        let tx = self.conn.transaction()?;
+        tx.execute("UPDATE rows SET id = ?2 WHERE id = ?1", rusqlite::params![old_id, new_id])?;
+        tx.execute(
+            "UPDATE pending_ops SET target_id = ?2 WHERE target_id = ?1",
+            rusqlite::params![old_id, new_id],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn rewrite_block_id(&mut self, old_id: &str, new_id: &str) -> anyhow::Result<()> {
+        let tx = self.conn.transaction()?;
+        tx.execute("UPDATE blocks SET id = ?2 WHERE id = ?1", rusqlite::params![old_id, new_id])?;
+        tx.execute(
+            "UPDATE blocks SET parent_block_id = ?2 WHERE parent_block_id = ?1",
+            rusqlite::params![old_id, new_id],
+        )?;
+        tx.execute(
+            "UPDATE pending_ops SET target_id = ?2 WHERE target_id = ?1",
+            rusqlite::params![old_id, new_id],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -590,6 +718,22 @@ impl Store {
             }
             Inverse::RecreateBlock { page_id, block_type, plain_text, .. } => {
                 self.edit_insert_block_after(page_id, None, block_type, plain_text)?;
+            }
+            Inverse::DeleteInsertedRow { row_id } => {
+                self.edit_delete_row(row_id)?;
+            }
+            Inverse::UpdateRowProperties { row_id, data_source_id: _, old_properties } => {
+                let patch: Value = serde_json::from_str(old_properties).unwrap_or_else(|_| json!({}));
+                self.edit_update_row(row_id, patch)?;
+            }
+            Inverse::RestoreRow { row_id } => {
+                self.conn.execute("UPDATE rows SET archived = 0, dirty = 1 WHERE id = ?1", [row_id])?;
+                let base: String = self.conn.query_row(
+                    "SELECT last_edited_time FROM rows WHERE id = ?1",
+                    [row_id],
+                    |r| r.get(0),
+                )?;
+                self.enqueue_op("restore_row", row_id, "{}", Some(&base))?;
             }
         }
         Ok(())
@@ -679,6 +823,9 @@ pub enum Inverse {
         plain_text: String,
         has_children: bool,
     },
+    DeleteInsertedRow { row_id: String },
+    UpdateRowProperties { row_id: String, data_source_id: String, old_properties: String },
+    RestoreRow { row_id: String },
 }
 
 #[derive(Debug, Clone)]
