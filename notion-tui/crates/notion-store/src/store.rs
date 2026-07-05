@@ -260,6 +260,68 @@ impl Store {
         )?;
         Ok(())
     }
+
+    pub fn enqueue_op(
+        &self,
+        op_type: &str,
+        target_id: &str,
+        payload: &str,
+        base: Option<&str>,
+    ) -> anyhow::Result<i64> {
+        self.conn.execute(
+            "INSERT INTO pending_ops (op_type, target_id, payload, base_edited_time)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![op_type, target_id, payload, base],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn ops(&self) -> anyhow::Result<Vec<OpRec>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT seq, op_type, target_id, payload, base_edited_time, state, error
+             FROM pending_ops ORDER BY seq",
+        )?;
+        let out = stmt
+            .query_map([], |r| {
+                Ok(OpRec {
+                    seq: r.get(0)?,
+                    op_type: r.get(1)?,
+                    target_id: r.get(2)?,
+                    payload: r.get(3)?,
+                    base_edited_time: r.get(4)?,
+                    state: r.get(5)?,
+                    error: r.get(6)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(out)
+    }
+
+    pub fn set_op_state(&self, seq: i64, state: &str, error: Option<&str>) -> anyhow::Result<()> {
+        self.conn.execute(
+            "UPDATE pending_ops SET state = ?2, error = ?3 WHERE seq = ?1",
+            rusqlite::params![seq, state, error],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_op(&self, seq: i64) -> anyhow::Result<()> {
+        self.conn.execute("DELETE FROM pending_ops WHERE seq = ?1", [seq])?;
+        Ok(())
+    }
+
+    pub fn pending_count(&self) -> anyhow::Result<u32> {
+        Ok(self.conn.query_row("SELECT count(*) FROM pending_ops", [], |r| r.get(0))?)
+    }
+
+    pub fn has_ops_for(&self, target_id: &str) -> anyhow::Result<bool> {
+        let n: i64 = self.conn.query_row(
+            "SELECT count(*) FROM pending_ops WHERE target_id = ?1",
+            [target_id],
+            |r| r.get(0),
+        )?;
+        Ok(n > 0)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -322,4 +384,15 @@ pub struct SearchHit {
     pub page_id: String,
     pub title: String,
     pub snippet: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct OpRec {
+    pub seq: i64,
+    pub op_type: String,
+    pub target_id: String,
+    pub payload: String,
+    pub base_edited_time: Option<String>,
+    pub state: String,
+    pub error: Option<String>,
 }
