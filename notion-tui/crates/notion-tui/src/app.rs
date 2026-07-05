@@ -4,6 +4,7 @@ use notion_sync::{SharedStore, SyncStatus};
 
 use crate::ui::input::{InputAction, InputState};
 use crate::ui::page::PageView;
+use crate::ui::props::{build_fields, build_property_value, PropsAction, PropsState};
 use crate::ui::search::{SearchAction, SearchState};
 use crate::ui::sidebar::SidebarState;
 use crate::ui::table::TableView;
@@ -45,6 +46,7 @@ pub struct App {
     pub search: Option<SearchState>,
     pub input: Option<InputState>,
     pub input_purpose: Option<InputPurpose>,
+    pub props: Option<PropsState>,
     pub pending: u32,
     pub pending_d: bool,
     pub undo_stack: Vec<notion_store::EditReceipt>,
@@ -63,6 +65,7 @@ impl App {
             search: None,
             input: None,
             input_purpose: None,
+            props: None,
             pending: 0,
             pending_d: false,
             undo_stack: Vec::new(),
@@ -126,6 +129,24 @@ impl App {
             self.undo_stack.push(receipt);
         }
         self.refresh_current_view();
+    }
+
+    pub fn update_row_property(&mut self, row_id: &str, prop_name: &str, prop_type: &str, text: &str) {
+        let value = build_property_value(prop_type, text);
+        let patch = serde_json::json!({ prop_name: value });
+        if let Ok(receipt) = self.store.lock().unwrap().edit_update_row(row_id, patch) {
+            self.undo_stack.push(receipt);
+        }
+        self.refresh_current_view();
+
+        if let View::Table(view) = &self.view {
+            if let Some(row) = view.rows.iter().find(|r| r.id == row_id) {
+                let fields = build_fields(view, row);
+                let cursor = self.props.as_ref().map(|p| p.cursor).unwrap_or(0);
+                self.props =
+                    Some(PropsState { row_id: row_id.to_string(), fields, cursor, edit_buffer: None });
+            }
+        }
     }
 
     pub fn refresh_sidebar(&mut self) {
@@ -315,6 +336,18 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
 /// `handle_key`'s Action against the store otherwise, and owns the '/' /
 /// Ctrl+P shortcuts that open search from any focus.
 pub fn dispatch_key(app: &mut App, key: KeyEvent) {
+    if app.props.is_some() {
+        let action = app.props.as_mut().unwrap().on_key(key);
+        match action {
+            PropsAction::None => {}
+            PropsAction::Close => app.props = None,
+            PropsAction::Commit { prop_name, prop_type, text } => {
+                let row_id = app.props.as_ref().unwrap().row_id.clone();
+                app.update_row_property(&row_id, &prop_name, &prop_type, &text);
+            }
+        }
+        return;
+    }
     if app.input.is_some() {
         let action = app.input.as_mut().unwrap().on_key(key);
         match action {
@@ -390,6 +423,13 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                         data_source_id: view.ds.id.clone(),
                         title_prop_name: title_col.name.clone(),
                     });
+                    return;
+                }
+            }
+            if key.code == KeyCode::Char('p') {
+                if let Some(row) = view.rows.get(view.cursor) {
+                    let fields = build_fields(view, row);
+                    app.props = Some(PropsState::new(row.id.clone(), fields));
                     return;
                 }
             }

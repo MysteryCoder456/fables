@@ -1,5 +1,6 @@
 pub mod input;
 pub mod page;
+pub mod props;
 pub mod search;
 pub mod sidebar;
 pub mod table;
@@ -66,6 +67,9 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
     if let Some(input_state) = &app.input {
         input::render(f, input_state);
+    }
+    if let Some(props_state) = &app.props {
+        props::render(f, props_state);
     }
 }
 
