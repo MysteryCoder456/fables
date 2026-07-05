@@ -25,12 +25,14 @@ pub enum Action {
     OpenPage(String),
     ToggleTodo(String),
     DeleteBlock(String),
+    DeleteRow(String),
     Undo,
 }
 
 pub enum InputPurpose {
     EditBlockText { block_id: String },
     InsertBlockAfter { page_id: String, after_block_id: Option<String> },
+    NewRow { data_source_id: String, title_prop_name: String },
 }
 
 pub struct App {
@@ -101,6 +103,26 @@ impl App {
         if let Ok((_, receipt)) =
             self.store.lock().unwrap().edit_insert_block_after(page_id, after, "paragraph", text)
         {
+            self.undo_stack.push(receipt);
+        }
+        self.refresh_current_view();
+    }
+
+    pub fn create_row(&mut self, data_source_id: &str, title_prop_name: &str, text: &str) {
+        let props = serde_json::json!({
+            title_prop_name: {
+                "type": "title",
+                "title": [{"plain_text": text, "type": "text", "text": {"content": text}}]
+            }
+        });
+        if let Ok((_, receipt)) = self.store.lock().unwrap().edit_create_row(data_source_id, props) {
+            self.undo_stack.push(receipt);
+        }
+        self.refresh_current_view();
+    }
+
+    pub fn delete_row(&mut self, row_id: &str) {
+        if let Ok(receipt) = self.store.lock().unwrap().edit_delete_row(row_id) {
             self.undo_stack.push(receipt);
         }
         self.refresh_current_view();
@@ -197,16 +219,21 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
     }
     if matches!(app.focus, Focus::Main) {
         if key.code == KeyCode::Char('d') {
-            let block_id = match &app.view {
+            let target_id = match &app.view {
                 View::Page(view) => view.block_id_at_cursor(),
-                _ => None,
+                View::Table(view) => view.selected_row_id(),
+                View::Empty => None,
             };
             if app.pending_d {
                 app.pending_d = false;
-                if let Some(id) = block_id {
-                    return Action::DeleteBlock(id);
+                if let Some(id) = target_id {
+                    return match &app.view {
+                        View::Page(_) => Action::DeleteBlock(id),
+                        View::Table(_) => Action::DeleteRow(id),
+                        View::Empty => Action::None,
+                    };
                 }
-            } else if block_id.is_some() {
+            } else if target_id.is_some() {
                 app.pending_d = true;
             }
             return Action::None;
@@ -303,6 +330,9 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                         InputPurpose::InsertBlockAfter { page_id, after_block_id } => {
                             app.insert_block(&page_id, after_block_id.as_deref(), &text)
                         }
+                        InputPurpose::NewRow { data_source_id, title_prop_name } => {
+                            app.create_row(&data_source_id, &title_prop_name, &text)
+                        }
                     }
                 }
                 app.input = None;
@@ -352,6 +382,18 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 return;
             }
         }
+        if let View::Table(view) = &app.view {
+            if key.code == KeyCode::Char('o') {
+                if let Some(title_col) = view.columns.iter().find(|c| c.prop_type == "title") {
+                    app.input = Some(InputState::new("new row", ""));
+                    app.input_purpose = Some(InputPurpose::NewRow {
+                        data_source_id: view.ds.id.clone(),
+                        title_prop_name: title_col.name.clone(),
+                    });
+                    return;
+                }
+            }
+        }
     }
     match handle_key(app, key) {
         Action::None => {}
@@ -359,6 +401,7 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         Action::OpenPage(id) => app.open_page(&id),
         Action::ToggleTodo(id) => app.toggle_todo(&id),
         Action::DeleteBlock(id) => app.delete_block(&id),
+        Action::DeleteRow(id) => app.delete_row(&id),
         Action::Undo => app.undo(),
     }
 }
