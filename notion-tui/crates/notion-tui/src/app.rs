@@ -1,8 +1,9 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use notion_store::TreeNode;
-use notion_sync::SyncStatus;
+use notion_store::{NodeKind, TreeNode};
+use notion_sync::{SharedStore, SyncStatus};
 
 use crate::ui::page::PageView;
+use crate::ui::search::{SearchAction, SearchState};
 use crate::ui::sidebar::SidebarState;
 use crate::ui::table::TableView;
 
@@ -30,10 +31,12 @@ pub struct App {
     pub sidebar: SidebarState,
     pub view: View,
     pub history: Vec<String>,
+    pub search: Option<SearchState>,
+    store: SharedStore,
 }
 
 impl App {
-    pub fn new() -> App {
+    pub fn new(store: SharedStore) -> App {
         App {
             focus: Focus::Sidebar,
             sync_status: SyncStatus::Starting,
@@ -41,13 +44,74 @@ impl App {
             sidebar: SidebarState::new(Vec::new()),
             view: View::Empty,
             history: Vec::new(),
+            search: None,
+            store,
         }
     }
-}
 
-impl Default for App {
-    fn default() -> Self {
-        Self::new()
+    pub fn refresh_sidebar(&mut self) {
+        if let Ok(nodes) = self.store.lock().unwrap().sidebar_nodes() {
+            self.sidebar.nodes = nodes;
+        }
+    }
+
+    pub fn open_node(&mut self, node: &TreeNode) {
+        match node.kind {
+            NodeKind::Page => self.open_page(&node.id),
+            NodeKind::DataSource => self.open_table(&node.id),
+        }
+    }
+
+    fn open_table(&mut self, data_source_id: &str) {
+        let guard = self.store.lock().unwrap();
+        let ds = guard.get_data_source(data_source_id).ok().flatten();
+        let rows = guard.rows(data_source_id).unwrap_or_default();
+        drop(guard);
+        if let Some(ds) = ds {
+            self.view = View::Table(TableView::new(ds, rows));
+        }
+    }
+
+    /// Opens a page by id; if the id is actually a data source, opens the table view instead.
+    pub fn open_page(&mut self, page_id: &str) {
+        let guard = self.store.lock().unwrap();
+        if let Ok(Some(page)) = guard.get_page(page_id) {
+            let blocks = guard.page_blocks(page_id).unwrap_or_default();
+            drop(guard);
+            self.view = View::Page(PageView::new(page, blocks));
+            return;
+        }
+        if let Ok(Some(ds)) = guard.get_data_source(page_id) {
+            let rows = guard.rows(page_id).unwrap_or_default();
+            drop(guard);
+            self.view = View::Table(TableView::new(ds, rows));
+        }
+    }
+
+    pub fn refresh_search(&mut self) {
+        let query = match &self.search {
+            Some(s) => s.input.clone(),
+            None => return,
+        };
+        let hits = self.store.lock().unwrap().search(&query).unwrap_or_default();
+        if let Some(search) = &mut self.search {
+            search.results = hits;
+            search.cursor = 0;
+        }
+    }
+
+    pub fn refresh_current_view(&mut self) {
+        match &self.view {
+            View::Page(v) => {
+                let id = v.page.id.clone();
+                self.open_page(&id);
+            }
+            View::Table(v) => {
+                let id = v.ds.id.clone();
+                self.open_table(&id);
+            }
+            View::Empty => {}
+        }
     }
 }
 
@@ -136,4 +200,43 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         }
     }
     Action::None
+}
+
+/// Top-level key entry point: routes to the search modal when open, applies
+/// `handle_key`'s Action against the store otherwise, and owns the '/' /
+/// Ctrl+P shortcuts that open search from any focus.
+pub fn dispatch_key(app: &mut App, key: KeyEvent) {
+    if app.search.is_some() {
+        let action = app.search.as_mut().unwrap().on_key(key);
+        match action {
+            SearchAction::None => {}
+            SearchAction::QueryChanged => app.refresh_search(),
+            SearchAction::Open(id) => {
+                app.search = None;
+                app.open_page(&id);
+            }
+            SearchAction::Close => app.search = None,
+        }
+        return;
+    }
+    let opens_search = key.code == KeyCode::Char('/')
+        || (key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL));
+    if opens_search {
+        app.search = Some(SearchState::new());
+        return;
+    }
+    match handle_key(app, key) {
+        Action::None => {}
+        Action::OpenNode(node) => app.open_node(&node),
+        Action::OpenPage(id) => app.open_page(&id),
+    }
+}
+
+/// Forwards mouse-wheel scroll to whichever view is focused.
+pub fn scroll(app: &mut App, delta: isize) {
+    match &mut app.view {
+        View::Page(v) => v.move_cursor(delta),
+        View::Table(v) => v.move_cursor(delta),
+        View::Empty => {}
+    }
 }

@@ -1,4 +1,5 @@
 pub mod page;
+pub mod search;
 pub mod sidebar;
 pub mod table;
 
@@ -53,4 +54,8 @@ pub fn draw(f: &mut Frame, app: &App) {
             .style(Style::default().add_modifier(Modifier::REVERSED)),
         rows[1],
     );
+
+    if let Some(search_state) = &app.search {
+        search::render(f, search_state);
+    }
 }

@@ -1,10 +1,16 @@
+use std::sync::{Arc, Mutex};
+
 use notion_tui::app::App;
 use notion_tui::ui;
 use ratatui::{backend::TestBackend, Terminal};
 
+fn test_store() -> notion_sync::SharedStore {
+    Arc::new(Mutex::new(notion_store::Store::open_in_memory().unwrap()))
+}
+
 #[test]
 fn renders_frame_with_status_bar() {
-    let mut app = App::new();
+    let mut app = App::new(test_store());
     app.sync_status = notion_sync::SyncStatus::Idle { updated: 0 };
     let backend = TestBackend::new(60, 12);
     let mut term = Terminal::new(backend).unwrap();
@@ -15,7 +21,7 @@ fn renders_frame_with_status_bar() {
 #[test]
 fn q_quits() {
     use crossterm::event::{KeyCode, KeyEvent};
-    let mut app = App::new();
+    let mut app = App::new(test_store());
     notion_tui::app::handle_key(&mut app, KeyEvent::from(KeyCode::Char('q')));
     assert!(app.should_quit);
 }
@@ -25,7 +31,7 @@ fn renders_sidebar_tree() {
     use notion_store::{NodeKind, TreeNode};
     use notion_tui::ui::sidebar::SidebarState;
 
-    let mut app = App::new();
+    let mut app = App::new(test_store());
     app.sync_status = notion_sync::SyncStatus::Idle { updated: 0 };
     app.sidebar = SidebarState::new(vec![
         TreeNode { id: "p1".into(), title: "Roadmap".into(), parent_id: None, kind: NodeKind::Page },
@@ -49,7 +55,7 @@ fn renders_page_view() {
     use notion_tui::app::{Focus, View};
     use notion_tui::ui::page::PageView;
 
-    let mut app = App::new();
+    let mut app = App::new(test_store());
     app.focus = Focus::Main;
     app.sync_status = notion_sync::SyncStatus::Idle { updated: 0 };
     let page_rec = PageRec {
