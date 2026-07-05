@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/notion-api", "crates/notion-store"]
+members = ["crates/notion-api", "crates/notion-store", "crates/notion-sync"]
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }

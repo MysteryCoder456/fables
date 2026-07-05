@@ -1,0 +1,14 @@
+[package]
+name = "notion-sync"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+notion-api = { path = "../notion-api" }
+notion-store = { path = "../notion-store" }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+wiremock = { workspace = true }
+serde_json = { workspace = true }

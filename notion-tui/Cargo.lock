@@ -697,6 +697,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "notion-sync"
+version = "0.1.0"
+dependencies = [
+ "notion-api",
+ "notion-store",
+ "serde_json",
+ "tokio",
+ "wiremock",
+]
+
+[[package]]
 name = "num_cpus"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
