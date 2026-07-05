@@ -11,7 +11,7 @@ async fn main() -> anyhow::Result<()> {
     let store = Arc::new(Mutex::new(notion_store::Store::open(&cfg.db_path)?));
     let client = notion_api::NotionClient::new(cfg.token.clone());
     let mut handle =
-        notion_sync::spawn_puller(client, store.clone(), Duration::from_secs(cfg.poll_interval_secs));
+        notion_sync::spawn_sync(client, store.clone(), Duration::from_secs(cfg.poll_interval_secs));
 
     let _guard = TerminalGuard::enter()?;
     let mut term = ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(std::io::stdout()))?;

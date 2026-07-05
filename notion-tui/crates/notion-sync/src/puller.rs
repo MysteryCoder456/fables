@@ -1,11 +1,7 @@
-use std::sync::Arc;
-use std::time::Duration;
-
 use notion_api::{ApiError, NotionClient, ParentRef, SearchItem};
 use notion_store::{BlockRec, DataSourceRec, PageRec, RowRec};
-use tokio::sync::watch;
 
-use crate::{SharedStore, SyncHandle, SyncStatus};
+use crate::SharedStore;
 
 fn parent_cols(p: &ParentRef) -> (String, Option<String>) {
     match p {
@@ -117,34 +113,4 @@ pub async fn pull_once(client: &NotionClient, store: &SharedStore) -> Result<u32
         store.lock().unwrap().meta_set("hwm", &max_seen).ok();
     }
     Ok(updated)
-}
-
-pub fn spawn_puller(client: NotionClient, store: SharedStore, interval: Duration) -> SyncHandle {
-    let (status_tx, status_rx) = watch::channel(SyncStatus::Starting);
-    let (data_tx, data_rx) = watch::channel(0u64);
-    tokio::spawn(async move {
-        let client = Arc::new(client);
-        loop {
-            status_tx.send_replace(SyncStatus::Syncing { done: 0 });
-            match pull_once(&client, &store).await {
-                Ok(updated) => {
-                    if updated > 0 {
-                        data_tx.send_modify(|v| *v += 1);
-                    }
-                    status_tx.send_replace(SyncStatus::Idle { updated });
-                }
-                Err(ApiError::Network(_)) => {
-                    status_tx.send_replace(SyncStatus::Offline);
-                }
-                Err(e) => {
-                    status_tx.send_replace(SyncStatus::Failed(e.to_string()));
-                }
-            }
-            tokio::time::sleep(interval).await;
-        }
-    });
-    SyncHandle {
-        status: status_rx,
-        data_version: data_rx,
-    }
 }
