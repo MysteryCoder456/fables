@@ -4,6 +4,7 @@ use notion_sync::SyncStatus;
 
 use crate::ui::page::PageView;
 use crate::ui::sidebar::SidebarState;
+use crate::ui::table::TableView;
 
 pub enum Focus {
     Sidebar,
@@ -13,6 +14,7 @@ pub enum Focus {
 pub enum View {
     Empty,
     Page(PageView),
+    Table(TableView),
 }
 
 pub enum Action {
@@ -104,6 +106,29 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                 (KeyCode::Backspace, _) | (KeyCode::Char('-'), _) => {
                     if let Some(prev) = app.history.pop() {
                         return Action::OpenPage(prev);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let View::Table(view) = &mut app.view {
+            match key.code {
+                KeyCode::Char('j') | KeyCode::Down => view.move_cursor(1),
+                KeyCode::Char('k') | KeyCode::Up => view.move_cursor(-1),
+                KeyCode::Char('g') => view.cursor = 0,
+                KeyCode::Char('G') => view.cursor = view.rows.len().saturating_sub(1),
+                KeyCode::Char('h') => {
+                    view.sort_col = view.sort_col.saturating_sub(1);
+                }
+                KeyCode::Char('l') => {
+                    if view.sort_col + 1 < view.columns.len() {
+                        view.sort_col += 1;
+                    }
+                }
+                KeyCode::Char('s') => view.toggle_sort(view.sort_col),
+                KeyCode::Enter => {
+                    if let Some(row_id) = view.selected_row_id() {
+                        return Action::OpenPage(row_id);
                     }
                 }
                 _ => {}

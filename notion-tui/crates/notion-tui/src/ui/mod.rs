@@ -1,5 +1,6 @@
 pub mod page;
 pub mod sidebar;
+pub mod table;
 
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Modifier, Style};
@@ -43,6 +44,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     let main_focused = matches!(app.focus, Focus::Main);
     match &app.view {
         View::Page(view) => page::render(f, main_area, view, main_focused),
+        View::Table(view) => table::render(f, main_area, view, main_focused),
         View::Empty => f.render_widget(Block::default().borders(Borders::ALL), main_area),
     }
 
