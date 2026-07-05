@@ -22,6 +22,9 @@ pub enum Action {
     None,
     OpenNode(TreeNode),
     OpenPage(String),
+    ToggleTodo(String),
+    DeleteBlock(String),
+    Undo,
 }
 
 pub struct App {
@@ -32,6 +35,9 @@ pub struct App {
     pub view: View,
     pub history: Vec<String>,
     pub search: Option<SearchState>,
+    pub pending: u32,
+    pub pending_d: bool,
+    pub undo_stack: Vec<notion_store::EditReceipt>,
     store: SharedStore,
 }
 
@@ -45,7 +51,32 @@ impl App {
             view: View::Empty,
             history: Vec::new(),
             search: None,
+            pending: 0,
+            pending_d: false,
+            undo_stack: Vec::new(),
             store,
+        }
+    }
+
+    pub fn toggle_todo(&mut self, block_id: &str) {
+        if let Ok(receipt) = self.store.lock().unwrap().edit_toggle_todo(block_id) {
+            self.undo_stack.push(receipt);
+        }
+        self.refresh_current_view();
+    }
+
+    pub fn delete_block(&mut self, block_id: &str) {
+        if let Ok(receipt) = self.store.lock().unwrap().edit_delete_block(block_id) {
+            self.undo_stack.push(receipt);
+        }
+        self.refresh_current_view();
+    }
+
+    pub fn undo(&mut self) {
+        if let Some(receipt) = self.undo_stack.pop() {
+            self.store.lock().unwrap().undo(receipt).ok();
+            self.refresh_current_view();
+            self.refresh_sidebar();
         }
     }
 
@@ -132,7 +163,29 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
             app.sidebar.hidden = !app.sidebar.hidden;
             return Action::None;
         }
+        KeyCode::Char('u') if key.modifiers.is_empty() => {
+            app.pending_d = false;
+            return Action::Undo;
+        }
         _ => {}
+    }
+    if matches!(app.focus, Focus::Main) {
+        if key.code == KeyCode::Char('d') {
+            let block_id = match &app.view {
+                View::Page(view) => view.block_id_at_cursor(),
+                _ => None,
+            };
+            if app.pending_d {
+                app.pending_d = false;
+                if let Some(id) = block_id {
+                    return Action::DeleteBlock(id);
+                }
+            } else if block_id.is_some() {
+                app.pending_d = true;
+            }
+            return Action::None;
+        }
+        app.pending_d = false;
     }
     if matches!(app.focus, Focus::Sidebar) {
         match key.code {
@@ -157,8 +210,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                 (KeyCode::Char('G'), _) => view.cursor = view.lines().len().saturating_sub(1),
                 (KeyCode::Char('d'), KeyModifiers::CONTROL) => view.move_cursor(10),
                 (KeyCode::Char('u'), KeyModifiers::CONTROL) => view.move_cursor(-10),
-                (KeyCode::Char('h'), _) | (KeyCode::Char('l'), _) | (KeyCode::Char(' '), _) => {
-                    view.toggle_at_cursor()
+                (KeyCode::Char('h'), _) | (KeyCode::Char('l'), _) => view.toggle_at_cursor(),
+                (KeyCode::Char(' '), _) => {
+                    if let Some(block_id) = view.todo_block_at_cursor() {
+                        return Action::ToggleTodo(block_id);
+                    }
                 }
                 (KeyCode::Enter, _) => {
                     if let Some(target) = view.link_at_cursor() {
@@ -229,6 +285,9 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         Action::None => {}
         Action::OpenNode(node) => app.open_node(&node),
         Action::OpenPage(id) => app.open_page(&id),
+        Action::ToggleTodo(id) => app.toggle_todo(&id),
+        Action::DeleteBlock(id) => app.delete_block(&id),
+        Action::Undo => app.undo(),
     }
 }
 

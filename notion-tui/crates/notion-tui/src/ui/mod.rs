@@ -11,14 +11,19 @@ use ratatui::Frame;
 use crate::app::{App, Focus, View};
 use notion_sync::SyncStatus;
 
-pub fn status_line(status: &SyncStatus) -> String {
-    match status {
+pub fn status_line(status: &SyncStatus, pending: u32) -> String {
+    let base = match status {
         SyncStatus::Starting => "starting…".into(),
         SyncStatus::Syncing { .. } => "⟳ syncing…".into(),
         SyncStatus::Idle { updated: 0 } => "✓ synced".into(),
         SyncStatus::Idle { updated } => format!("✓ synced ({updated} updated)"),
         SyncStatus::Offline => "⚠ offline".into(),
         SyncStatus::Failed(msg) => format!("✗ sync failed: {msg}"),
+    };
+    if pending > 0 {
+        format!("{base} · {pending} pending")
+    } else {
+        base
     }
 }
 
@@ -50,12 +55,23 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
 
     f.render_widget(
-        Paragraph::new(status_line(&app.sync_status))
+        Paragraph::new(status_line(&app.sync_status, app.pending))
             .style(Style::default().add_modifier(Modifier::REVERSED)),
         rows[1],
     );
 
     if let Some(search_state) = &app.search {
         search::render(f, search_state);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_line_appends_pending_count() {
+        assert_eq!(status_line(&SyncStatus::Idle { updated: 0 }, 0), "✓ synced");
+        assert_eq!(status_line(&SyncStatus::Idle { updated: 0 }, 3), "✓ synced · 3 pending");
     }
 }

@@ -98,6 +98,18 @@ impl PageView {
     pub fn link_at_cursor(&self) -> Option<String> {
         self.lines().get(self.cursor).and_then(|l| l.link_page_id.clone())
     }
+
+    pub fn block_id_at_cursor(&self) -> Option<String> {
+        self.lines().get(self.cursor).map(|l| l.block_id.clone())
+    }
+
+    pub fn todo_block_at_cursor(&self) -> Option<String> {
+        let id = self.block_id_at_cursor()?;
+        self.blocks
+            .iter()
+            .any(|b| b.id == id && b.block_type == "to_do")
+            .then_some(id)
+    }
 }
 
 pub fn render(f: &mut Frame, area: Rect, view: &PageView, focused: bool) {

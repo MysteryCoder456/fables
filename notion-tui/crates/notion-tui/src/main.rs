@@ -40,6 +40,9 @@ async fn main() -> anyhow::Result<()> {
             _ = handle.status.changed() => {
                 app.sync_status = handle.status.borrow().clone();
             }
+            _ = handle.pending.changed() => {
+                app.pending = *handle.pending.borrow();
+            }
         }
     }
     Ok(())
