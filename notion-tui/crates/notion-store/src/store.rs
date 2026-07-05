@@ -1,4 +1,5 @@
 use rusqlite::Connection;
+use serde_json::{json, Value};
 use std::path::Path;
 
 pub struct Store {
@@ -322,6 +323,277 @@ impl Store {
         )?;
         Ok(n > 0)
     }
+
+    pub fn is_page_dirty(&self, page_id: &str) -> anyhow::Result<bool> {
+        let dirty: i64 =
+            self.conn
+                .query_row("SELECT dirty FROM pages WHERE id = ?1", [page_id], |r| r.get(0))?;
+        Ok(dirty != 0)
+    }
+
+    pub fn clear_page_dirty(&self, page_id: &str) -> anyhow::Result<()> {
+        self.conn.execute("UPDATE pages SET dirty = 0 WHERE id = ?1", [page_id])?;
+        Ok(())
+    }
+
+    pub fn edit_toggle_todo(&mut self, block_id: &str) -> anyhow::Result<EditReceipt> {
+        let (page_id, payload_str, block_type): (String, String, String) = self.conn.query_row(
+            "SELECT page_id, payload, block_type FROM blocks WHERE id = ?1",
+            [block_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        let mut payload: Value = serde_json::from_str(&payload_str).unwrap_or_else(|_| json!({}));
+        let checked = payload["checked"].as_bool().unwrap_or(false);
+        payload["checked"] = json!(!checked);
+        let new_payload = payload.to_string();
+
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "UPDATE blocks SET payload = ?2 WHERE id = ?1",
+            rusqlite::params![block_id, new_payload],
+        )?;
+        tx.execute("UPDATE pages SET dirty = 1 WHERE id = ?1", [&page_id])?;
+        tx.commit()?;
+
+        let base = self.get_page(&page_id)?.map(|p| p.last_edited_time);
+        let op_payload = json!({"block_type": block_type, "block_payload": new_payload}).to_string();
+        let op_seq = self.enqueue_op("update_block", block_id, &op_payload, base.as_deref())?;
+
+        Ok(EditReceipt {
+            op_seq,
+            inverse: Inverse::ToggleTodo { block_id: block_id.to_string() },
+        })
+    }
+
+    pub fn edit_update_block_text(&mut self, block_id: &str, new_text: &str) -> anyhow::Result<EditReceipt> {
+        let (page_id, old_payload, old_plain_text, block_type): (String, String, String, String) =
+            self.conn.query_row(
+                "SELECT page_id, payload, plain_text, block_type FROM blocks WHERE id = ?1",
+                [block_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )?;
+        let mut payload: Value = serde_json::from_str(&old_payload).unwrap_or_else(|_| json!({}));
+        if let Value::Object(ref mut map) = payload {
+            map.insert(
+                "rich_text".into(),
+                json!([{"plain_text": new_text, "type": "text", "text": {"content": new_text}}]),
+            );
+        }
+        let new_payload = payload.to_string();
+
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "UPDATE blocks SET payload = ?2, plain_text = ?3 WHERE id = ?1",
+            rusqlite::params![block_id, new_payload, new_text],
+        )?;
+        tx.execute("UPDATE pages SET dirty = 1 WHERE id = ?1", [&page_id])?;
+        tx.commit()?;
+
+        let base = self.get_page(&page_id)?.map(|p| p.last_edited_time);
+        let op_payload = json!({"block_type": block_type, "block_payload": new_payload}).to_string();
+        let op_seq = self.enqueue_op("update_block", block_id, &op_payload, base.as_deref())?;
+
+        Ok(EditReceipt {
+            op_seq,
+            inverse: Inverse::UpdateBlockText {
+                block_id: block_id.to_string(),
+                old_payload,
+                old_plain_text,
+            },
+        })
+    }
+
+    pub fn edit_insert_block_after(
+        &mut self,
+        page_id: &str,
+        after_block_id: Option<&str>,
+        block_type: &str,
+        text: &str,
+    ) -> anyhow::Result<(String, EditReceipt)> {
+        let (parent_block_id, insert_ordinal): (Option<String>, i64) = match after_block_id {
+            Some(id) => {
+                let (parent, ord): (Option<String>, i64) = self.conn.query_row(
+                    "SELECT parent_block_id, ordinal FROM blocks WHERE id = ?1",
+                    [id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )?;
+                (parent, ord + 1)
+            }
+            None => (None, 0),
+        };
+
+        let block_id = format!(
+            "tmp-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let payload = json!({"rich_text": [{"plain_text": text, "type": "text", "text": {"content": text}}]})
+            .to_string();
+
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "UPDATE blocks SET ordinal = ordinal + 1
+             WHERE page_id = ?1 AND ordinal >= ?2
+               AND COALESCE(parent_block_id, '') = COALESCE(?3, '')",
+            rusqlite::params![page_id, insert_ordinal, parent_block_id],
+        )?;
+        tx.execute(
+            "INSERT INTO blocks (id, page_id, parent_block_id, ordinal, block_type, payload, plain_text, has_children)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)",
+            rusqlite::params![block_id, page_id, parent_block_id, insert_ordinal, block_type, payload, text],
+        )?;
+        tx.execute("UPDATE pages SET dirty = 1 WHERE id = ?1", [page_id])?;
+        tx.commit()?;
+
+        let op_payload = json!({
+            "page_id": page_id,
+            "parent_id": parent_block_id,
+            "after": after_block_id,
+            "block_type": block_type,
+            "text": text,
+        })
+        .to_string();
+        let op_seq = self.enqueue_op("append_block", &block_id, &op_payload, None)?;
+
+        let receipt = EditReceipt {
+            op_seq,
+            inverse: Inverse::DeleteInsertedBlock { block_id: block_id.clone() },
+        };
+        Ok((block_id, receipt))
+    }
+
+    pub fn edit_delete_block(&mut self, block_id: &str) -> anyhow::Result<EditReceipt> {
+        let (page_id, parent_block_id, ordinal, block_type, payload, plain_text, has_children): (
+            String,
+            Option<String>,
+            i64,
+            String,
+            String,
+            String,
+            bool,
+        ) = self.conn.query_row(
+            "SELECT page_id, parent_block_id, ordinal, block_type, payload, plain_text, has_children
+             FROM blocks WHERE id = ?1",
+            [block_id],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get::<_, i64>(6)? != 0,
+                ))
+            },
+        )?;
+
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM blocks WHERE id = ?1", [block_id])?;
+        tx.execute("UPDATE pages SET dirty = 1 WHERE id = ?1", [&page_id])?;
+        tx.commit()?;
+
+        let base = self.get_page(&page_id)?.map(|p| p.last_edited_time);
+        let op_payload = json!({"page_id": page_id}).to_string();
+        let op_seq = self.enqueue_op("delete_block", block_id, &op_payload, base.as_deref())?;
+
+        Ok(EditReceipt {
+            op_seq,
+            inverse: Inverse::RecreateBlock {
+                page_id,
+                block_id: block_id.to_string(),
+                parent_block_id,
+                ordinal,
+                block_type,
+                payload,
+                plain_text,
+                has_children,
+            },
+        })
+    }
+
+    pub fn undo(&mut self, receipt: EditReceipt) -> anyhow::Result<()> {
+        let still_pending = self.ops()?.iter().any(|o| o.seq == receipt.op_seq);
+        if still_pending {
+            self.delete_op(receipt.op_seq)?;
+            self.apply_inverse_locally(&receipt.inverse)
+        } else {
+            self.apply_inverse_as_new_edit(&receipt.inverse)
+        }
+    }
+
+    fn apply_inverse_locally(&mut self, inv: &Inverse) -> anyhow::Result<()> {
+        match inv {
+            Inverse::ToggleTodo { block_id } => {
+                let payload_str: String =
+                    self.conn
+                        .query_row("SELECT payload FROM blocks WHERE id = ?1", [block_id], |r| r.get(0))?;
+                let mut payload: Value = serde_json::from_str(&payload_str).unwrap_or_else(|_| json!({}));
+                let checked = payload["checked"].as_bool().unwrap_or(false);
+                payload["checked"] = json!(!checked);
+                self.conn.execute(
+                    "UPDATE blocks SET payload = ?2 WHERE id = ?1",
+                    rusqlite::params![block_id, payload.to_string()],
+                )?;
+            }
+            Inverse::UpdateBlockText { block_id, old_payload, old_plain_text } => {
+                self.conn.execute(
+                    "UPDATE blocks SET payload = ?2, plain_text = ?3 WHERE id = ?1",
+                    rusqlite::params![block_id, old_payload, old_plain_text],
+                )?;
+            }
+            Inverse::DeleteInsertedBlock { block_id } => {
+                self.conn.execute("DELETE FROM blocks WHERE id = ?1", [block_id])?;
+            }
+            Inverse::RecreateBlock {
+                page_id,
+                block_id,
+                parent_block_id,
+                ordinal,
+                block_type,
+                payload,
+                plain_text,
+                has_children,
+            } => {
+                self.conn.execute(
+                    "INSERT INTO blocks (id, page_id, parent_block_id, ordinal, block_type,
+                                         payload, plain_text, has_children)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    rusqlite::params![
+                        block_id,
+                        page_id,
+                        parent_block_id,
+                        ordinal,
+                        block_type,
+                        payload,
+                        plain_text,
+                        *has_children as i64
+                    ],
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_inverse_as_new_edit(&mut self, inv: &Inverse) -> anyhow::Result<()> {
+        match inv {
+            Inverse::ToggleTodo { block_id } => {
+                self.edit_toggle_todo(block_id)?;
+            }
+            Inverse::UpdateBlockText { block_id, old_plain_text, .. } => {
+                self.edit_update_block_text(block_id, old_plain_text)?;
+            }
+            Inverse::DeleteInsertedBlock { block_id } => {
+                self.edit_delete_block(block_id)?;
+            }
+            Inverse::RecreateBlock { page_id, block_type, plain_text, .. } => {
+                self.edit_insert_block_after(page_id, None, block_type, plain_text)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -384,6 +656,29 @@ pub struct SearchHit {
     pub page_id: String,
     pub title: String,
     pub snippet: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct EditReceipt {
+    pub op_seq: i64,
+    pub inverse: Inverse,
+}
+
+#[derive(Debug, Clone)]
+pub enum Inverse {
+    ToggleTodo { block_id: String },
+    UpdateBlockText { block_id: String, old_payload: String, old_plain_text: String },
+    DeleteInsertedBlock { block_id: String },
+    RecreateBlock {
+        page_id: String,
+        block_id: String,
+        parent_block_id: Option<String>,
+        ordinal: i64,
+        block_type: String,
+        payload: String,
+        plain_text: String,
+        has_children: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
