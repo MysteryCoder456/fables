@@ -47,6 +47,14 @@ impl NotionClient {
         self.request(reqwest::Method::POST, path, Some(body)).await
     }
 
+    pub async fn patch_json(&self, path: &str, body: &Value) -> Result<Value, ApiError> {
+        self.request(reqwest::Method::PATCH, path, Some(body)).await
+    }
+
+    pub async fn delete_json(&self, path: &str) -> Result<Value, ApiError> {
+        self.request(reqwest::Method::DELETE, path, None).await
+    }
+
     async fn pace(&self) {
         let mut next = self.next_allowed.lock().await;
         let now = Instant::now();

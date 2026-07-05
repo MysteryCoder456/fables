@@ -101,6 +101,52 @@ impl NotionClient {
             }
         }
     }
+
+    pub async fn update_block(
+        &self,
+        block_id: &str,
+        block_type: &str,
+        payload: &Value,
+    ) -> Result<Value, ApiError> {
+        let body = json!({ block_type: payload });
+        self.patch_json(&format!("/v1/blocks/{block_id}"), &body).await
+    }
+
+    pub async fn delete_block(&self, block_id: &str) -> Result<Value, ApiError> {
+        self.delete_json(&format!("/v1/blocks/{block_id}")).await
+    }
+
+    pub async fn append_children(
+        &self,
+        container_id: &str,
+        after: Option<&str>,
+        block: Value,
+    ) -> Result<Value, ApiError> {
+        let mut body = json!({"children": [block]});
+        if let Some(a) = after {
+            body["after"] = json!(a);
+        }
+        self.patch_json(&format!("/v1/blocks/{container_id}/children"), &body).await
+    }
+
+    pub async fn create_page(&self, parent: Value, properties: Value) -> Result<Value, ApiError> {
+        let body = json!({"parent": parent, "properties": properties});
+        self.post_json("/v1/pages", &body).await
+    }
+
+    pub async fn update_page(&self, page_id: &str, body: Value) -> Result<Value, ApiError> {
+        self.patch_json(&format!("/v1/pages/{page_id}"), &body).await
+    }
+
+    pub async fn get_block_edited_time(&self, block_id: &str) -> Result<String, ApiError> {
+        let v = self.get_json(&format!("/v1/blocks/{block_id}")).await?;
+        Ok(v["last_edited_time"].as_str().unwrap_or_default().to_string())
+    }
+
+    pub async fn get_page_edited_time(&self, page_id: &str) -> Result<String, ApiError> {
+        let v = self.get_json(&format!("/v1/pages/{page_id}")).await?;
+        Ok(v["last_edited_time"].as_str().unwrap_or_default().to_string())
+    }
 }
 
 fn parse_search_item(v: &Value) -> SearchItem {
