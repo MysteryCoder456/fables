@@ -50,6 +50,8 @@ pub struct App {
     pub pending: u32,
     pub pending_d: bool,
     pub undo_stack: Vec<notion_store::EditReceipt>,
+    pub confirm: Option<crate::ui::confirm::ConfirmState>,
+    pending_editor: Option<(String, Vec<crate::markdown::Unit>)>,
     store: SharedStore,
 }
 
@@ -69,6 +71,8 @@ impl App {
             pending: 0,
             pending_d: false,
             undo_stack: Vec::new(),
+            confirm: None,
+            pending_editor: None,
             store,
         }
     }
@@ -147,6 +151,57 @@ impl App {
                     Some(PropsState { row_id: row_id.to_string(), fields, cursor, edit_buffer: None });
             }
         }
+    }
+
+    /// Opens the current page's Markdown in an editor. Takes an injectable
+    /// `run_editor` function so tests don't spawn a real subprocess; production
+    /// code passes a closure around `editor::edit_text(&editor::editor_command(), initial)`.
+    pub fn edit_in_editor(&mut self, run_editor: impl FnOnce(&str) -> anyhow::Result<String>) {
+        let View::Page(view) = &self.view else { return };
+        let page_id = view.page.id.clone();
+        let blocks = view.blocks.clone();
+        let (md, units) = crate::markdown::blocks_to_markdown(&blocks);
+
+        let edited = match run_editor(&md) {
+            Ok(text) => text,
+            Err(_) => return,
+        };
+
+        let empty = std::collections::HashSet::new();
+        let mut guard = self.store.lock().unwrap();
+        let applied = crate::markdown::apply_edited_markdown(&mut guard, &page_id, &units, &edited, &empty);
+        drop(guard);
+
+        match applied {
+            Ok(result) if !result.protected_missing.is_empty() => {
+                self.confirm = Some(crate::ui::confirm::ConfirmState {
+                    message: format!(
+                        "Delete {} block(s) that no longer appear in the edited text?",
+                        result.protected_missing.len()
+                    ),
+                    ids: result.protected_missing,
+                });
+                self.pending_editor = Some((page_id, units));
+            }
+            Ok(_) => self.refresh_current_view(),
+            Err(_) => {}
+        }
+    }
+
+    fn confirm_delete_protected(&mut self, confirm: bool) {
+        if let Some((page_id, units)) = self.pending_editor.take() {
+            if confirm {
+                if let Some(state) = self.confirm.take() {
+                    let ids: std::collections::HashSet<String> = state.ids.into_iter().collect();
+                    let mut guard = self.store.lock().unwrap();
+                    let _ = crate::markdown::apply_edited_markdown(&mut guard, &page_id, &units, "", &ids);
+                    drop(guard);
+                }
+            } else {
+                self.confirm = None;
+            }
+        }
+        self.refresh_current_view();
     }
 
     pub fn refresh_sidebar(&mut self) {
@@ -336,6 +391,15 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
 /// `handle_key`'s Action against the store otherwise, and owns the '/' /
 /// Ctrl+P shortcuts that open search from any focus.
 pub fn dispatch_key(app: &mut App, key: KeyEvent) {
+    if app.confirm.is_some() {
+        let action = app.confirm.as_mut().unwrap().on_key(key);
+        match action {
+            crate::ui::confirm::ConfirmAction::None => {}
+            crate::ui::confirm::ConfirmAction::Yes => app.confirm_delete_protected(true),
+            crate::ui::confirm::ConfirmAction::No => app.confirm_delete_protected(false),
+        }
+        return;
+    }
     if app.props.is_some() {
         let action = app.props.as_mut().unwrap().on_key(key);
         match action {
@@ -412,6 +476,12 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 let after = view.block_id_at_cursor();
                 app.input = Some(InputState::new("new block", ""));
                 app.input_purpose = Some(InputPurpose::InsertBlockAfter { page_id, after_block_id: after });
+                return;
+            }
+            if key.code == KeyCode::Char('e') {
+                app.edit_in_editor(|initial| {
+                    crate::editor::edit_text(&crate::editor::editor_command(), initial)
+                });
                 return;
             }
         }

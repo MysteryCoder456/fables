@@ -1,3 +1,4 @@
+pub mod confirm;
 pub mod input;
 pub mod page;
 pub mod props;
@@ -70,6 +71,9 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
     if let Some(props_state) = &app.props {
         props::render(f, props_state);
+    }
+    if let Some(confirm_state) = &app.confirm {
+        confirm::render(f, confirm_state);
     }
 }
 
