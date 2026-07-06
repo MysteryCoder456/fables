@@ -25,7 +25,7 @@ impl SidebarState {
         SidebarState { nodes, collapsed: HashSet::new(), cursor: 0, hidden: false }
     }
 
-    pub fn visible(&self) -> Vec<VisibleNode> {
+    pub fn visible(&self) -> Vec<VisibleNode<'_>> {
         let mut out = Vec::new();
         // Pages: DFS from roots (parent_id None or parent not present as a page node).
         let page_ids: HashSet<&str> = self
@@ -36,7 +36,7 @@ impl SidebarState {
             .collect();
         let roots = self.nodes.iter().filter(|n| {
             n.kind == NodeKind::Page
-                && n.parent_id.as_deref().map_or(true, |p| !page_ids.contains(p))
+                && n.parent_id.as_deref().is_none_or(|p| !page_ids.contains(p))
         });
         for root in roots {
             self.push_subtree(root, 0, &mut out);

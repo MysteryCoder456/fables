@@ -61,12 +61,13 @@ async fn pull_skips_block_fetch_for_dirty_page() {
     let updated = pull_once(&fast_client(server.uri()), &store).await.unwrap();
     assert_eq!(updated, 0);
 
+    // Only the search request was made — no block-children fetch.
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+
     let s = store.lock().unwrap();
     // Title untouched (upsert_page's own dirty guard) and blocks untouched (puller's dirty skip).
     assert_eq!(s.get_page("p1").unwrap().unwrap().title, "Local title");
     let blocks = s.page_blocks("p1").unwrap();
     assert_eq!(blocks.len(), 1);
     assert_eq!(blocks[0].plain_text, "locally edited content");
-    // Only the search request was made — no block-children fetch.
-    assert_eq!(server.received_requests().await.unwrap().len(), 1);
 }
