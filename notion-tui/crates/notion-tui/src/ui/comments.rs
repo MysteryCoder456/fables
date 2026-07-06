@@ -1,9 +1,11 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use notion_store::CommentRec;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, List, ListItem};
 use ratatui::Frame;
+
+use crate::ui::theme::Theme;
 
 pub struct CommentsState {
     pub parent_id: String,
@@ -44,7 +46,7 @@ impl CommentsState {
     }
 }
 
-pub fn render(f: &mut Frame, area: Rect, state: &CommentsState) {
+pub fn render(f: &mut Frame, area: Rect, state: &CommentsState, theme: &Theme) {
     let items: Vec<ListItem> = state
         .items
         .iter()
@@ -52,14 +54,18 @@ pub fn render(f: &mut Frame, area: Rect, state: &CommentsState) {
         .map(|(i, c)| {
             let mut item = ListItem::new(format!("{}: {}", c.author, c.body));
             if i == state.cursor {
-                item = item.style(Style::default().add_modifier(Modifier::REVERSED));
+                item = item.style(theme.highlight);
             }
             item
         })
         .collect();
     f.render_widget(
-        List::new(items)
-            .block(Block::default().borders(Borders::ALL).title(" comments (n new · r reply) ")),
+        List::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(theme.border)
+                .title(Span::styled(" comments (n new · r reply) ", theme.title)),
+        ),
         area,
     );
 }

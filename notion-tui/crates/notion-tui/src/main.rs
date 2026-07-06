@@ -19,6 +19,7 @@ async fn main() -> anyhow::Result<()> {
     let mut app = app::App::new(store);
     app.editor_override = cfg.editor.clone();
     app.keymap = notion_tui::keymap::Keymap::with_overrides(&cfg.keys);
+    app.theme = notion_tui::ui::theme::named(&cfg.theme);
     app.refresh_sidebar();
     let mut events = EventStream::new();
 

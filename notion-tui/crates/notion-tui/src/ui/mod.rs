@@ -8,9 +8,9 @@ pub mod queue;
 pub mod search;
 pub mod sidebar;
 pub mod table;
+pub mod theme;
 
 use ratatui::layout::{Constraint, Direction, Layout};
-use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
@@ -53,7 +53,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     };
 
     if !app.sidebar.hidden {
-        sidebar::render(f, cols[0], &app.sidebar, matches!(app.focus, Focus::Sidebar));
+        sidebar::render(f, cols[0], &app.sidebar, matches!(app.focus, Focus::Sidebar), &app.theme);
     }
     let full_main = *cols.last().unwrap();
     let main_area = if let Some(comments_state) = &app.comments {
@@ -61,23 +61,23 @@ pub fn draw(f: &mut Frame, app: &App) {
             .direction(Direction::Horizontal)
             .constraints([Constraint::Min(1), Constraint::Length(36)])
             .split(full_main);
-        comments::render(f, halves[1], comments_state);
+        comments::render(f, halves[1], comments_state, &app.theme);
         halves[0]
     } else {
         full_main
     };
     let main_focused = matches!(app.focus, Focus::Main);
+    let theme = &app.theme;
     match &app.view {
-        View::Page(view) => page::render(f, main_area, view, main_focused),
-        View::Table(view) => table::render(f, main_area, view, main_focused),
-        View::Board(view) => board::render(f, main_area, view, main_focused),
-        View::Queue(view) => queue::render(f, main_area, view, main_focused),
+        View::Page(view) => page::render(f, main_area, view, main_focused, theme),
+        View::Table(view) => table::render(f, main_area, view, main_focused, theme),
+        View::Board(view) => board::render(f, main_area, view, main_focused, theme),
+        View::Queue(view) => queue::render(f, main_area, view, main_focused, theme),
         View::Empty => f.render_widget(Block::default().borders(Borders::ALL), main_area),
     }
 
     f.render_widget(
-        Paragraph::new(status_line(&app.sync_status, app.pending, app.conflicted))
-            .style(Style::default().add_modifier(Modifier::REVERSED)),
+        Paragraph::new(status_line(&app.sync_status, app.pending, app.conflicted)).style(theme.status),
         rows[1],
     );
 

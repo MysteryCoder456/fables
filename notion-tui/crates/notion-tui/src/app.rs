@@ -78,6 +78,7 @@ pub struct App {
     pub remote: Option<RemoteHandle>,
     pub editor_override: Option<String>,
     pub keymap: crate::keymap::Keymap,
+    pub theme: crate::ui::theme::Theme,
     pending_editor: Option<(String, Vec<crate::markdown::Unit>)>,
     store: SharedStore,
 }
@@ -105,6 +106,7 @@ impl App {
             remote: None,
             editor_override: None,
             keymap: crate::keymap::Keymap::new(),
+            theme: crate::ui::theme::named("default"),
             pending_editor: None,
             store,
         }

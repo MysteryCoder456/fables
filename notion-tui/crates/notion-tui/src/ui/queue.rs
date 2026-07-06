@@ -1,8 +1,10 @@
 use notion_store::OpRec;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, List, ListItem};
 use ratatui::Frame;
+
+use crate::ui::theme::Theme;
 
 pub struct QueueView {
     pub ops: Vec<OpRec>,
@@ -24,7 +26,7 @@ impl QueueView {
     }
 }
 
-pub fn render(f: &mut Frame, area: Rect, view: &QueueView, focused: bool) {
+pub fn render(f: &mut Frame, area: Rect, view: &QueueView, focused: bool, theme: &Theme) {
     let items: Vec<ListItem> = view
         .ops
         .iter()
@@ -36,7 +38,7 @@ pub fn render(f: &mut Frame, area: Rect, view: &QueueView, focused: bool) {
                 op.seq, op.op_type, op.target_id, op.state, err
             ));
             if i == view.cursor && focused {
-                item = item.style(Style::default().add_modifier(Modifier::REVERSED));
+                item = item.style(theme.highlight);
             }
             item
         })
@@ -45,7 +47,11 @@ pub fn render(f: &mut Frame, area: Rect, view: &QueueView, focused: bool) {
         List::new(items).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" queue (r retry · p keep mine · t take theirs · e merge) "),
+                .border_style(theme.border)
+                .title(Span::styled(
+                    " queue (r retry · p keep mine · t take theirs · e merge) ",
+                    theme.title,
+                )),
         ),
         area,
     );

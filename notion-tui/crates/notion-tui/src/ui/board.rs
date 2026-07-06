@@ -1,11 +1,11 @@
 use notion_store::{DataSourceRec, RowRec};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, List, ListItem};
 use ratatui::Frame;
 use serde_json::Value;
 
 use crate::ui::table::cell_text;
+use crate::ui::theme::Theme;
 
 pub struct BoardView {
     pub ds: DataSourceRec,
@@ -90,7 +90,7 @@ impl BoardView {
     }
 }
 
-pub fn render(f: &mut Frame, area: Rect, view: &BoardView, focused: bool) {
+pub fn render(f: &mut Frame, area: Rect, view: &BoardView, focused: bool, theme: &Theme) {
     let n = view.columns.len().max(1) as u32;
     let constraints: Vec<Constraint> = view.columns.iter().map(|_| Constraint::Ratio(1, n)).collect();
     let cols = Layout::default().direction(Direction::Horizontal).constraints(constraints).split(area);
@@ -108,13 +108,21 @@ pub fn render(f: &mut Frame, area: Rect, view: &BoardView, focused: bool) {
                     .unwrap_or_default();
                 let mut item = ListItem::new(title);
                 if focused && ci == view.col && i == view.card {
-                    item = item.style(Style::default().add_modifier(Modifier::REVERSED));
+                    item = item.style(theme.highlight);
                 }
                 item
             })
             .collect();
         let title = format!(" {} ({}) ", view.columns[ci], cards.len());
-        f.render_widget(List::new(items).block(Block::default().borders(Borders::ALL).title(title)), *rect);
+        f.render_widget(
+            List::new(items).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(theme.border)
+                    .title(ratatui::text::Span::styled(title, theme.title)),
+            ),
+            *rect,
+        );
     }
 }
 

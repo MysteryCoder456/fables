@@ -2,10 +2,11 @@ use std::collections::HashSet;
 
 use notion_store::{BlockRec, PageRec};
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem};
 use ratatui::Frame;
+
+use crate::ui::theme::Theme;
 
 pub struct BlockLine {
     pub block_id: String,
@@ -112,7 +113,7 @@ impl PageView {
     }
 }
 
-pub fn render(f: &mut Frame, area: Rect, view: &PageView, focused: bool) {
+pub fn render(f: &mut Frame, area: Rect, view: &PageView, focused: bool, theme: &Theme) {
     let items: Vec<ListItem> = view
         .lines()
         .iter()
@@ -120,14 +121,19 @@ pub fn render(f: &mut Frame, area: Rect, view: &PageView, focused: bool) {
         .map(|(i, l)| {
             let mut item = ListItem::new(Line::from(format!("{}{}", "  ".repeat(l.indent), l.text)));
             if i == view.cursor && focused {
-                item = item.style(Style::default().add_modifier(Modifier::REVERSED));
+                item = item.style(theme.highlight);
             }
             item
         })
         .collect();
     let title = format!(" {} ", view.page.title);
     f.render_widget(
-        List::new(items).block(Block::default().borders(Borders::ALL).title(title)),
+        List::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(theme.border)
+                .title(Span::styled(title, theme.title)),
+        ),
         area,
     );
 }

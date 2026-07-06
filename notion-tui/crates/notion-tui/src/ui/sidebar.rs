@@ -2,10 +2,11 @@ use std::collections::HashSet;
 
 use notion_store::{NodeKind, TreeNode};
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem};
 use ratatui::Frame;
+
+use crate::ui::theme::Theme;
 
 pub struct VisibleNode<'a> {
     pub node: &'a TreeNode,
@@ -80,7 +81,7 @@ impl SidebarState {
     }
 }
 
-pub fn render(f: &mut Frame, area: Rect, state: &SidebarState, focused: bool) {
+pub fn render(f: &mut Frame, area: Rect, state: &SidebarState, focused: bool, theme: &Theme) {
     let items: Vec<ListItem> = state
         .visible()
         .iter()
@@ -93,14 +94,19 @@ pub fn render(f: &mut Frame, area: Rect, state: &SidebarState, focused: bool) {
             let line = format!("{}{}{}", "  ".repeat(v.depth), marker, v.node.title);
             let mut item = ListItem::new(Line::from(line));
             if i == state.cursor && focused {
-                item = item.style(Style::default().add_modifier(Modifier::REVERSED));
+                item = item.style(theme.highlight);
             }
             item
         })
         .collect();
     let title = if focused { " notion ● " } else { " notion " };
     f.render_widget(
-        List::new(items).block(Block::default().borders(Borders::ALL).title(title)),
+        List::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(theme.border)
+                .title(Span::styled(title, theme.title)),
+        ),
         area,
     );
 }

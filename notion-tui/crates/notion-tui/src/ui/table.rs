@@ -1,9 +1,12 @@
 use notion_store::{DataSourceRec, RowRec};
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
+use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Row as TRow, Table};
 use ratatui::Frame;
 use serde_json::Value;
+
+use crate::ui::theme::Theme;
 
 pub struct Column {
     pub name: String,
@@ -116,7 +119,7 @@ impl TableView {
     }
 }
 
-pub fn render(f: &mut Frame, area: Rect, view: &TableView, focused: bool) {
+pub fn render(f: &mut Frame, area: Rect, view: &TableView, focused: bool, theme: &Theme) {
     let header = TRow::new(
         view.columns
             .iter()
@@ -145,7 +148,7 @@ pub fn render(f: &mut Frame, area: Rect, view: &TableView, focused: bool) {
             let cells: Vec<String> = view.columns.iter().map(|c| view.cell(r, c)).collect();
             let mut row = TRow::new(cells);
             if i == view.cursor && focused {
-                row = row.style(Style::default().add_modifier(Modifier::REVERSED));
+                row = row.style(theme.highlight);
             }
             row
         })
@@ -157,9 +160,12 @@ pub fn render(f: &mut Frame, area: Rect, view: &TableView, focused: bool) {
         .map(|(i, _)| if i == 0 { Constraint::Min(20) } else { Constraint::Length(14) })
         .collect();
     f.render_widget(
-        Table::new(rows, widths)
-            .header(header)
-            .block(Block::default().borders(Borders::ALL).title(format!(" {} ", view.ds.title))),
+        Table::new(rows, widths).header(header).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(theme.border)
+                .title(Span::styled(format!(" {} ", view.ds.title), theme.title)),
+        ),
         area,
     );
 }
