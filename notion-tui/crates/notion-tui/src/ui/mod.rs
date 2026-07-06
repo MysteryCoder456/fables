@@ -1,3 +1,4 @@
+pub mod board;
 pub mod confirm;
 pub mod input;
 pub mod page;
