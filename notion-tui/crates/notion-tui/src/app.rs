@@ -2,6 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use notion_store::{NodeKind, TreeNode};
 use notion_sync::{SharedStore, SyncStatus};
 
+use crate::ui::board::BoardView;
 use crate::ui::input::{InputAction, InputState};
 use crate::ui::page::PageView;
 use crate::ui::props::{build_fields, build_property_value, PropsAction, PropsState};
@@ -18,6 +19,7 @@ pub enum View {
     Empty,
     Page(PageView),
     Table(TableView),
+    Board(BoardView),
 }
 
 pub enum Action {
@@ -27,6 +29,7 @@ pub enum Action {
     ToggleTodo(String),
     DeleteBlock(String),
     DeleteRow(String),
+    MoveCard { row_id: String, prop_name: String, prop_type: String, value: String },
     Undo,
 }
 
@@ -265,6 +268,19 @@ impl App {
                 let id = v.ds.id.clone();
                 self.open_table(&id);
             }
+            View::Board(v) => {
+                let (id, col, card) = (v.ds.id.clone(), v.col, v.card);
+                let guard = self.store.lock().unwrap();
+                let ds = guard.get_data_source(&id).ok().flatten();
+                let rows = guard.rows(&id).unwrap_or_default();
+                drop(guard);
+                if let Some(ds) = ds {
+                    let mut b = BoardView::new(ds, rows);
+                    b.col = col.min(b.columns.len().saturating_sub(1));
+                    b.card = card.min(b.cards_in(b.col).len().saturating_sub(1));
+                    self.view = View::Board(b);
+                }
+            }
             View::Empty => {}
         }
     }
@@ -298,6 +314,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
             let target_id = match &app.view {
                 View::Page(view) => view.block_id_at_cursor(),
                 View::Table(view) => view.selected_row_id(),
+                View::Board(view) => view.selected_row_id(),
                 View::Empty => None,
             };
             if app.pending_d {
@@ -306,6 +323,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                     return match &app.view {
                         View::Page(_) => Action::DeleteBlock(id),
                         View::Table(_) => Action::DeleteRow(id),
+                        View::Board(_) => Action::DeleteRow(id),
                         View::Empty => Action::None,
                     };
                 }
@@ -376,6 +394,40 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                 }
                 KeyCode::Char('s') => view.toggle_sort(view.sort_col),
                 KeyCode::Enter => {
+                    if let Some(row_id) = view.selected_row_id() {
+                        return Action::OpenPage(row_id);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let View::Board(view) = &mut app.view {
+            match (key.code, key.modifiers) {
+                (KeyCode::Char('j'), KeyModifiers::NONE) | (KeyCode::Down, _) => view.move_cursor_card(1),
+                (KeyCode::Char('k'), KeyModifiers::NONE) | (KeyCode::Up, _) => view.move_cursor_card(-1),
+                (KeyCode::Char('h'), _) => view.move_cursor_col(-1),
+                (KeyCode::Char('l'), _) => view.move_cursor_col(1),
+                (KeyCode::Char('J'), _) => {
+                    if let Some((row_id, value)) = view.move_card(1) {
+                        return Action::MoveCard {
+                            row_id,
+                            prop_name: view.group_prop.clone(),
+                            prop_type: view.group_type.clone(),
+                            value,
+                        };
+                    }
+                }
+                (KeyCode::Char('K'), _) => {
+                    if let Some((row_id, value)) = view.move_card(-1) {
+                        return Action::MoveCard {
+                            row_id,
+                            prop_name: view.group_prop.clone(),
+                            prop_type: view.group_type.clone(),
+                            value,
+                        };
+                    }
+                }
+                (KeyCode::Enter, _) => {
                     if let Some(row_id) = view.selected_row_id() {
                         return Action::OpenPage(row_id);
                     }
@@ -485,6 +537,22 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 return;
             }
         }
+        if key.code == KeyCode::Char('v') {
+            match std::mem::replace(&mut app.view, View::Empty) {
+                View::Table(t) => {
+                    if crate::ui::board::group_property(&t.ds.schema_json).is_some() {
+                        app.view = View::Board(BoardView::new(t.ds, t.rows));
+                    } else {
+                        app.view = View::Table(t);
+                    }
+                }
+                View::Board(b) => {
+                    app.view = View::Table(crate::ui::table::TableView::new(b.ds, b.rows));
+                }
+                other => app.view = other,
+            }
+            return;
+        }
         if let View::Table(view) = &app.view {
             if key.code == KeyCode::Char('o') {
                 if let Some(title_col) = view.columns.iter().find(|c| c.prop_type == "title") {
@@ -512,6 +580,9 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         Action::ToggleTodo(id) => app.toggle_todo(&id),
         Action::DeleteBlock(id) => app.delete_block(&id),
         Action::DeleteRow(id) => app.delete_row(&id),
+        Action::MoveCard { row_id, prop_name, prop_type, value } => {
+            app.update_row_property(&row_id, &prop_name, &prop_type, &value)
+        }
         Action::Undo => app.undo(),
     }
 }
@@ -521,6 +592,7 @@ pub fn scroll(app: &mut App, delta: isize) {
     match &mut app.view {
         View::Page(v) => v.move_cursor(delta),
         View::Table(v) => v.move_cursor(delta),
+        View::Board(v) => v.move_cursor_card(delta),
         View::Empty => {}
     }
 }

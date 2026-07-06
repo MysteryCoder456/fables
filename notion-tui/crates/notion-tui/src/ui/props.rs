@@ -114,8 +114,14 @@ pub fn build_property_value(prop_type: &str, text: &str) -> Value {
             json!({"type": "rich_text", "rich_text": [{"type": "text", "text": {"content": text}, "plain_text": text}]})
         }
         "number" => json!({"type": "number", "number": text.parse::<f64>().ok()}),
-        "select" => json!({"type": "select", "select": {"name": text}}),
-        "status" => json!({"type": "status", "status": {"name": text}}),
+        "select" => {
+            if text.is_empty() { json!({"type": "select", "select": null}) }
+            else { json!({"type": "select", "select": {"name": text}}) }
+        }
+        "status" => {
+            if text.is_empty() { json!({"type": "status", "status": null}) }
+            else { json!({"type": "status", "status": {"name": text}}) }
+        }
         "multi_select" => json!({
             "type": "multi_select",
             "multi_select": text.split(',').map(|s| json!({"name": s.trim()})).collect::<Vec<_>>()

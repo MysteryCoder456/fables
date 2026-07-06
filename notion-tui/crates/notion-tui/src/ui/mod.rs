@@ -55,6 +55,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     match &app.view {
         View::Page(view) => page::render(f, main_area, view, main_focused),
         View::Table(view) => table::render(f, main_area, view, main_focused),
+        View::Board(view) => board::render(f, main_area, view, main_focused),
         View::Empty => f.render_widget(Block::default().borders(Borders::ALL), main_area),
     }
 
