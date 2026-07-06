@@ -523,6 +523,46 @@ impl Store {
         })
     }
 
+    pub fn edit_reorder_block(
+        &mut self,
+        block_id: &str,
+        new_parent: Option<&str>,
+        new_after: Option<&str>,
+        new_ordinal: i64,
+    ) -> anyhow::Result<()> {
+        let (page_id, old_parent, old_ordinal): (String, Option<String>, i64) = self.conn.query_row(
+            "SELECT page_id, parent_block_id, ordinal FROM blocks WHERE id = ?1",
+            [block_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        if old_parent.as_deref() == new_parent && old_ordinal == new_ordinal {
+            return Ok(());
+        }
+        self.conn.execute(
+            "UPDATE blocks SET parent_block_id = ?2, ordinal = ?3 WHERE id = ?1",
+            rusqlite::params![block_id, new_parent, new_ordinal],
+        )?;
+
+        // If this block hasn't been pushed yet (its creation is still queued), just
+        // repoint that pending creation at the new spot instead of enqueuing a
+        // separate reorder op — there's nothing remote to reorder yet.
+        let pending_append = self.ops()?.into_iter().find(|o| o.op_type == "append_block" && o.target_id == block_id);
+        if let Some(op) = pending_append {
+            let mut payload: Value = serde_json::from_str(&op.payload).unwrap_or_default();
+            payload["parent_id"] = json!(new_parent);
+            payload["after"] = json!(new_after);
+            self.conn.execute(
+                "UPDATE pending_ops SET payload = ?2 WHERE seq = ?1",
+                rusqlite::params![op.seq, payload.to_string()],
+            )?;
+            return Ok(());
+        }
+
+        self.conn.execute("UPDATE pages SET dirty = 1 WHERE id = ?1", [&page_id])?;
+        self.enqueue_op("reorder_block", block_id, &json!({"page_id": page_id}).to_string(), None)?;
+        Ok(())
+    }
+
     pub fn undo(&mut self, receipt: EditReceipt) -> anyhow::Result<()> {
         let still_pending = self.ops()?.iter().any(|o| o.seq == receipt.op_seq);
         if still_pending {
