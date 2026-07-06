@@ -14,7 +14,7 @@ enum PushOutcome {
 
 fn extract_page_id(op: &OpRec) -> Option<String> {
     match op.op_type.as_str() {
-        "update_block" | "append_block" | "delete_block" => {
+        "update_block" | "append_block" | "delete_block" | "reorder_block" => {
             let v: Value = serde_json::from_str(&op.payload).ok()?;
             v["page_id"].as_str().map(str::to_string)
         }
@@ -216,11 +216,26 @@ async fn push_restore_row(
     Ok(PushOutcome::Success)
 }
 
+async fn push_reorder_block(store: &SharedStore, op: &OpRec) -> Result<PushOutcome, ApiError> {
+    // Notion's Blocks API has no reorder/move endpoint — there is nothing to call.
+    // This op exists purely to drive the same dirty-clearing machinery every
+    // other op type uses (see plan design notes).
+    let payload: Value = serde_json::from_str(&op.payload).unwrap_or_default();
+    let page_id = payload["page_id"].as_str().unwrap_or_default().to_string();
+
+    store.lock().unwrap().delete_op(op.seq).ok();
+    if !remaining_ops_reference_page(store, &page_id) {
+        store.lock().unwrap().clear_page_dirty(&page_id).ok();
+    }
+    Ok(PushOutcome::Success)
+}
+
 async fn push_one(client: &NotionClient, store: &SharedStore, op: &OpRec) -> Result<PushOutcome, ApiError> {
     match op.op_type.as_str() {
         "update_block" => push_update_block(client, store, op).await,
         "delete_block" => push_delete_block(client, store, op).await,
         "append_block" => push_append_block(client, store, op).await,
+        "reorder_block" => push_reorder_block(store, op).await,
         "update_row" => push_update_row(client, store, op).await,
         "create_row" => push_create_row(client, store, op).await,
         "delete_row" => push_delete_row(client, store, op).await,
