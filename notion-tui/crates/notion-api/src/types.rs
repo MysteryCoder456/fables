@@ -154,3 +154,24 @@ pub struct Row {
     pub last_edited_time: String,
     pub archived: bool,
 }
+
+#[derive(Debug, Clone)]
+pub struct Comment {
+    pub id: String,
+    pub discussion_id: String,
+    pub author: String,
+    pub body: String,
+    pub created_time: String,
+}
+
+impl Comment {
+    pub fn parse(v: &Value) -> Comment {
+        Comment {
+            id: v["id"].as_str().unwrap_or_default().to_string(),
+            discussion_id: v["discussion_id"].as_str().unwrap_or_default().to_string(),
+            author: v["created_by"]["id"].as_str().unwrap_or_default().to_string(),
+            body: rich_text_plain(&v["rich_text"]),
+            created_time: v["created_time"].as_str().unwrap_or_default().to_string(),
+        }
+    }
+}

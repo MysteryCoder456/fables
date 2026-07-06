@@ -1,7 +1,7 @@
 use crate::client::NotionClient;
 use crate::error::ApiError;
 use crate::types::{
-    Block, DataSource, DataSourceMeta, FlatBlock, PageMeta, Row, SearchItem, SearchPage,
+    Block, Comment, DataSource, DataSourceMeta, FlatBlock, PageMeta, Row, SearchItem, SearchPage,
 };
 use serde_json::{json, Value};
 use std::collections::VecDeque;
@@ -146,6 +146,44 @@ impl NotionClient {
     pub async fn get_page_edited_time(&self, page_id: &str) -> Result<String, ApiError> {
         let v = self.get_json(&format!("/v1/pages/{page_id}")).await?;
         Ok(v["last_edited_time"].as_str().unwrap_or_default().to_string())
+    }
+
+    /// All comments attached to a block (a page id is a valid block id here).
+    pub async fn list_comments(&self, block_id: &str) -> Result<Vec<Comment>, ApiError> {
+        let mut out = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let mut path = format!("/v1/comments?block_id={block_id}&page_size=100");
+            if let Some(c) = &cursor {
+                path.push_str(&format!("&start_cursor={c}"));
+            }
+            let v = self.get_json(&path).await?;
+            for item in v["results"].as_array().into_iter().flatten() {
+                out.push(Comment::parse(item));
+            }
+            cursor = v["next_cursor"].as_str().map(str::to_string);
+            if cursor.is_none() {
+                return Ok(out);
+            }
+        }
+    }
+
+    /// `parent` is either `{"page_id": ...}` / `{"block_id": ...}` for a new
+    /// thread, or callers use `create_comment_reply` to reply within a thread.
+    pub async fn create_comment(&self, parent: Value, body_text: &str) -> Result<Value, ApiError> {
+        let body = json!({
+            "parent": parent,
+            "rich_text": [{"type": "text", "text": {"content": body_text}}]
+        });
+        self.post_json("/v1/comments", &body).await
+    }
+
+    pub async fn create_comment_reply(&self, discussion_id: &str, body_text: &str) -> Result<Value, ApiError> {
+        let body = json!({
+            "discussion_id": discussion_id,
+            "rich_text": [{"type": "text", "text": {"content": body_text}}]
+        });
+        self.post_json("/v1/comments", &body).await
     }
 }
 
