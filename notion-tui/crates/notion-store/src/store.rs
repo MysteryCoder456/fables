@@ -563,6 +563,81 @@ impl Store {
         Ok(())
     }
 
+    pub fn replace_comments(&self, parent_id: &str, recs: &[CommentRec]) -> anyhow::Result<()> {
+        // Keep locally-created (still-pending, tmp-id) comments; replace the synced rest.
+        self.conn.execute(
+            "DELETE FROM comments WHERE parent_id = ?1 AND id NOT LIKE 'tmp-%'",
+            [parent_id],
+        )?;
+        let mut stmt = self.conn.prepare(
+            "INSERT OR REPLACE INTO comments (id, parent_id, parent_kind, thread_id, author, body, created_time)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )?;
+        for c in recs {
+            stmt.execute(rusqlite::params![
+                c.id, c.parent_id, c.parent_kind, c.thread_id, c.author, c.body, c.created_time
+            ])?;
+        }
+        Ok(())
+    }
+
+    pub fn comments_for(&self, parent_id: &str) -> anyhow::Result<Vec<CommentRec>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, parent_id, parent_kind, thread_id, author, body, created_time
+             FROM comments WHERE parent_id = ?1 ORDER BY created_time, id",
+        )?;
+        let out = stmt
+            .query_map([parent_id], |r| {
+                Ok(CommentRec {
+                    id: r.get(0)?, parent_id: r.get(1)?, parent_kind: r.get(2)?,
+                    thread_id: r.get(3)?, author: r.get(4)?, body: r.get(5)?,
+                    created_time: r.get(6)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(out)
+    }
+
+    /// Optimistic comment creation. Not undoable (the API cannot delete
+    /// comments), so this returns the temp id rather than an EditReceipt.
+    pub fn edit_add_comment(
+        &mut self,
+        parent_id: &str,
+        parent_kind: &str,
+        thread_id: Option<&str>,
+        body: &str,
+    ) -> anyhow::Result<String> {
+        let id = format!(
+            "tmp-{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        );
+        self.conn.execute(
+            "INSERT INTO comments (id, parent_id, parent_kind, thread_id, author, body, created_time)
+             VALUES (?1, ?2, ?3, ?4, 'me', ?5, '')",
+            rusqlite::params![id, parent_id, parent_kind, thread_id, body],
+        )?;
+        let payload = json!({
+            "parent_id": parent_id,
+            "parent_kind": parent_kind,
+            "thread_id": thread_id,
+            "body": body,
+        })
+        .to_string();
+        self.enqueue_op("create_comment", &id, &payload, None)?;
+        Ok(id)
+    }
+
+    pub fn rewrite_comment_id(&mut self, old_id: &str, new_id: &str) -> anyhow::Result<()> {
+        let tx = self.conn.transaction()?;
+        tx.execute("UPDATE comments SET id = ?2 WHERE id = ?1", rusqlite::params![old_id, new_id])?;
+        tx.execute(
+            "UPDATE pending_ops SET target_id = ?2 WHERE target_id = ?1",
+            rusqlite::params![old_id, new_id],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn undo(&mut self, receipt: EditReceipt) -> anyhow::Result<()> {
         let still_pending = self.ops()?.iter().any(|o| o.seq == receipt.op_seq);
         if still_pending {
@@ -828,6 +903,17 @@ pub struct RowRec {
     pub properties: String,
     pub last_edited_time: String,
     pub archived: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommentRec {
+    pub id: String,
+    pub parent_id: String,
+    pub parent_kind: String,
+    pub thread_id: Option<String>,
+    pub author: String,
+    pub body: String,
+    pub created_time: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
