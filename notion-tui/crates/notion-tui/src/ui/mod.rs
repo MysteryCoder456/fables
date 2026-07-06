@@ -4,6 +4,7 @@ pub mod confirm;
 pub mod input;
 pub mod page;
 pub mod props;
+pub mod queue;
 pub mod search;
 pub mod sidebar;
 pub mod table;
@@ -16,7 +17,7 @@ use ratatui::Frame;
 use crate::app::{App, Focus, View};
 use notion_sync::SyncStatus;
 
-pub fn status_line(status: &SyncStatus, pending: u32) -> String {
+pub fn status_line(status: &SyncStatus, pending: u32, conflicted: u32) -> String {
     let base = match status {
         SyncStatus::Starting => "starting…".into(),
         SyncStatus::Syncing { .. } => "⟳ syncing…".into(),
@@ -25,11 +26,14 @@ pub fn status_line(status: &SyncStatus, pending: u32) -> String {
         SyncStatus::Offline => "⚠ offline".into(),
         SyncStatus::Failed(msg) => format!("✗ sync failed: {msg}"),
     };
+    let mut out = base;
     if pending > 0 {
-        format!("{base} · {pending} pending")
-    } else {
-        base
+        out = format!("{out} · {pending} pending");
     }
+    if conflicted > 0 {
+        out = format!("{out} · ⚠ {conflicted} conflicted");
+    }
+    out
 }
 
 pub fn draw(f: &mut Frame, app: &App) {
@@ -67,11 +71,12 @@ pub fn draw(f: &mut Frame, app: &App) {
         View::Page(view) => page::render(f, main_area, view, main_focused),
         View::Table(view) => table::render(f, main_area, view, main_focused),
         View::Board(view) => board::render(f, main_area, view, main_focused),
+        View::Queue(view) => queue::render(f, main_area, view, main_focused),
         View::Empty => f.render_widget(Block::default().borders(Borders::ALL), main_area),
     }
 
     f.render_widget(
-        Paragraph::new(status_line(&app.sync_status, app.pending))
+        Paragraph::new(status_line(&app.sync_status, app.pending, app.conflicted))
             .style(Style::default().add_modifier(Modifier::REVERSED)),
         rows[1],
     );
@@ -96,7 +101,15 @@ mod tests {
 
     #[test]
     fn status_line_appends_pending_count() {
-        assert_eq!(status_line(&SyncStatus::Idle { updated: 0 }, 0), "✓ synced");
-        assert_eq!(status_line(&SyncStatus::Idle { updated: 0 }, 3), "✓ synced · 3 pending");
+        assert_eq!(status_line(&SyncStatus::Idle { updated: 0 }, 0, 0), "✓ synced");
+        assert_eq!(status_line(&SyncStatus::Idle { updated: 0 }, 3, 0), "✓ synced · 3 pending");
+    }
+
+    #[test]
+    fn status_line_appends_conflicted_count() {
+        assert_eq!(
+            status_line(&SyncStatus::Idle { updated: 0 }, 1, 2),
+            "✓ synced · 1 pending · ⚠ 2 conflicted"
+        );
     }
 }

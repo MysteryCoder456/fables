@@ -20,6 +20,7 @@ pub enum View {
     Page(PageView),
     Table(TableView),
     Board(BoardView),
+    Queue(crate::ui::queue::QueueView),
 }
 
 pub enum Action {
@@ -56,6 +57,8 @@ pub struct App {
     pub undo_stack: Vec<notion_store::EditReceipt>,
     pub confirm: Option<crate::ui::confirm::ConfirmState>,
     pub comments: Option<crate::ui::comments::CommentsState>,
+    pub queue_return: Option<Box<View>>,
+    pub conflicted: u32,
     pending_editor: Option<(String, Vec<crate::markdown::Unit>)>,
     store: SharedStore,
 }
@@ -78,6 +81,8 @@ impl App {
             undo_stack: Vec::new(),
             confirm: None,
             comments: None,
+            queue_return: None,
+            conflicted: 0,
             pending_editor: None,
             store,
         }
@@ -253,6 +258,45 @@ impl App {
 
     fn request_comment_refresh(&mut self) {} // real body added in Task 9
 
+    pub fn toggle_queue(&mut self) {
+        match std::mem::replace(&mut self.view, View::Empty) {
+            View::Queue(_) => {
+                self.view = self.queue_return.take().map(|b| *b).unwrap_or(View::Empty);
+            }
+            other => {
+                self.queue_return = Some(Box::new(other));
+                let ops = self.store.lock().unwrap().ops().unwrap_or_default();
+                self.view = View::Queue(crate::ui::queue::QueueView::new(ops));
+            }
+        }
+    }
+
+    pub fn refresh_conflicted(&mut self) {
+        self.conflicted = self
+            .store
+            .lock()
+            .unwrap()
+            .ops()
+            .unwrap_or_default()
+            .iter()
+            .filter(|o| o.state == "conflicted")
+            .count() as u32;
+    }
+
+    fn refresh_queue(&mut self) {
+        if let View::Queue(q) = &mut self.view {
+            let cursor = q.cursor;
+            let ops = self.store.lock().unwrap().ops().unwrap_or_default();
+            let mut nq = crate::ui::queue::QueueView::new(ops);
+            nq.cursor = cursor.min(nq.ops.len().saturating_sub(1));
+            self.view = View::Queue(nq);
+        }
+        self.refresh_conflicted();
+    }
+
+    pub fn request_refetch(&mut self, _target: notion_store::ResolvedTarget) {} // wired in Task 9
+    pub fn request_merge(&mut self, _op: notion_store::OpRec) {} // wired in Task 9
+
     pub fn refresh_sidebar(&mut self) {
         if let Ok(nodes) = self.store.lock().unwrap().sidebar_nodes() {
             self.sidebar.nodes = nodes;
@@ -305,6 +349,10 @@ impl App {
     }
 
     pub fn refresh_current_view(&mut self) {
+        if matches!(self.view, View::Queue(_)) {
+            self.refresh_queue();
+            return;
+        }
         match &self.view {
             View::Page(v) => {
                 let id = v.page.id.clone();
@@ -327,6 +375,7 @@ impl App {
                     self.view = View::Board(b);
                 }
             }
+            View::Queue(_) => unreachable!(),
             View::Empty => {}
         }
     }
@@ -361,7 +410,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                 View::Page(view) => view.block_id_at_cursor(),
                 View::Table(view) => view.selected_row_id(),
                 View::Board(view) => view.selected_row_id(),
-                View::Empty => None,
+                View::Queue(_) | View::Empty => None,
             };
             if app.pending_d {
                 app.pending_d = false;
@@ -370,7 +419,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                         View::Page(_) => Action::DeleteBlock(id),
                         View::Table(_) => Action::DeleteRow(id),
                         View::Board(_) => Action::DeleteRow(id),
-                        View::Empty => Action::None,
+                        View::Queue(_) | View::Empty => Action::None,
                     };
                 }
             } else if target_id.is_some() {
@@ -657,6 +706,51 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             }
         }
     }
+    if key.code == KeyCode::Char('Q') {
+        app.toggle_queue();
+        return;
+    }
+    if let View::Queue(q) = &mut app.view {
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => q.move_cursor(1),
+            KeyCode::Char('k') | KeyCode::Up => q.move_cursor(-1),
+            KeyCode::Esc => app.toggle_queue(),
+            KeyCode::Char('r') => {
+                if let Some(op) = q.selected() {
+                    let seq = op.seq;
+                    app.store.lock().unwrap().retry_op(seq).ok();
+                    app.refresh_queue();
+                }
+            }
+            KeyCode::Char('p') => {
+                if let Some(op) = q.selected() {
+                    let seq = op.seq;
+                    app.store.lock().unwrap().resolve_keep_mine(seq).ok();
+                    app.refresh_queue();
+                }
+            }
+            KeyCode::Char('t') => {
+                if let Some(op) = q.selected() {
+                    let seq = op.seq;
+                    let target = app.store.lock().unwrap().resolve_take_theirs(seq).ok().flatten();
+                    if let Some(target) = target {
+                        app.request_refetch(target);
+                    }
+                    app.refresh_queue();
+                }
+            }
+            KeyCode::Char('e') => {
+                if let Some(op) = q.selected() {
+                    if op.state == "conflicted" && op.op_type == "update_block" {
+                        let op = op.clone();
+                        app.request_merge(op);
+                    }
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
     match handle_key(app, key) {
         Action::None => {}
         Action::OpenNode(node) => app.open_node(&node),
@@ -677,6 +771,7 @@ pub fn scroll(app: &mut App, delta: isize) {
         View::Page(v) => v.move_cursor(delta),
         View::Table(v) => v.move_cursor(delta),
         View::Board(v) => v.move_cursor_card(delta),
+        View::Queue(v) => v.move_cursor(delta),
         View::Empty => {}
     }
 }

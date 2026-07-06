@@ -42,6 +42,7 @@ async fn main() -> anyhow::Result<()> {
             }
             _ = handle.pending.changed() => {
                 app.pending = *handle.pending.borrow();
+                app.refresh_conflicted();
             }
         }
     }
