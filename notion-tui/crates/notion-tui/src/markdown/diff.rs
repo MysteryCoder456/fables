@@ -96,6 +96,18 @@ pub fn apply_edited_markdown(
     let mut pending_deletes: Vec<usize> = Vec::new();
     let mut pending_inserts: Vec<usize> = Vec::new();
 
+    // Anchor every insert after the current last top-level block (if any) so its
+    // sibling-ordinal shift never touches a pre-existing block — otherwise a block
+    // that never actually moved would get bumped and resync_order would (wrongly)
+    // enqueue a real reorder for it. resync_order still does all the real
+    // positioning/reparenting afterward; this only avoids collateral disturbance.
+    let mut insert_anchor: Option<String> = store
+        .page_blocks(page_id)?
+        .iter()
+        .filter(|b| b.parent_block_id.is_none())
+        .max_by_key(|b| b.ordinal)
+        .map(|b| b.id.clone());
+
     macro_rules! flush {
         () => {{
             let n = pending_deletes.len().min(pending_inserts.len());
@@ -114,7 +126,13 @@ pub fn apply_edited_markdown(
             for &ins in &pending_inserts[n..] {
                 let new_line_idx = new_idx_of_editable[leftover_new[ins]];
                 let line = &new_lines[new_line_idx];
-                let (id, _receipt) = store.edit_insert_block_after(page_id, None, &line.block_type, &line.text)?;
+                let (id, _receipt) = store.edit_insert_block_after(
+                    page_id,
+                    insert_anchor.as_deref(),
+                    &line.block_type,
+                    &line.text,
+                )?;
+                insert_anchor = Some(id.clone());
                 id_at_new_line[new_line_idx] = Some(id);
                 result.inserted += 1;
             }
