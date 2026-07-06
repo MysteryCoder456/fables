@@ -31,6 +31,10 @@ async fn crawl_edit_queue_push_smoke() {
                 "to_do": {"rich_text": [{"plain_text": "Buy milk"}], "checked": false}}],
             "has_more": false, "next_cursor": null})))
         .mount(&server).await;
+    Mock::given(method("GET")).and(path("/v1/comments"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [], "has_more": false, "next_cursor": null})))
+        .mount(&server).await;
     Mock::given(method("GET")).and(path("/v1/pages/p1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "object": "page", "id": "p1", "last_edited_time": "2026-07-05T10:00:00.000Z"

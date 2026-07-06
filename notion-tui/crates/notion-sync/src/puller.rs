@@ -71,6 +71,20 @@ pub async fn pull_once(client: &NotionClient, store: &SharedStore) -> Result<u32
                         })
                         .collect();
                     store.lock().unwrap().replace_page_blocks(&p.id, &recs).ok();
+                    let comments = client.list_comments(&p.id).await?;
+                    let comment_recs: Vec<notion_store::CommentRec> = comments
+                        .iter()
+                        .map(|c| notion_store::CommentRec {
+                            id: c.id.clone(),
+                            parent_id: p.id.clone(),
+                            parent_kind: "page".into(),
+                            thread_id: Some(c.discussion_id.clone()),
+                            author: c.author.clone(),
+                            body: c.body.clone(),
+                            created_time: c.created_time.clone(),
+                        })
+                        .collect();
+                    store.lock().unwrap().replace_comments(&p.id, &comment_recs).ok();
                     updated += 1;
                 }
                 SearchItem::DataSource(d) => {

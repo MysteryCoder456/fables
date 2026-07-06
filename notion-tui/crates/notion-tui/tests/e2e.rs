@@ -30,6 +30,10 @@ async fn crawl_then_browse_smoke() {
                 "paragraph": {"rich_text": [{"plain_text": "hello world"}]}}],
             "has_more": false, "next_cursor": null})))
         .mount(&server).await;
+    Mock::given(method("GET")).and(path("/v1/comments"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [], "has_more": false, "next_cursor": null})))
+        .mount(&server).await;
 
     let store = Arc::new(Mutex::new(Store::open_in_memory().unwrap()));
     let mut client = NotionClient::with_base_url("t", server.uri());

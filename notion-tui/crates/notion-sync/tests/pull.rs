@@ -48,6 +48,10 @@ async fn first_crawl_stores_pages_blocks_and_hwm() {
     Mock::given(method("GET")).and(path("/v1/blocks/p2/children"))
         .respond_with(ResponseTemplate::new(200).set_body_json(empty_children()))
         .mount(&server).await;
+    Mock::given(method("GET")).and(path("/v1/comments"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [], "has_more": false, "next_cursor": null})))
+        .mount(&server).await;
 
     let store: SharedStore = Arc::new(Mutex::new(Store::open_in_memory().unwrap()));
     let client = fast_client(server.uri());

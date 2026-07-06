@@ -230,6 +230,31 @@ async fn push_reorder_block(store: &SharedStore, op: &OpRec) -> Result<PushOutco
     Ok(PushOutcome::Success)
 }
 
+async fn push_create_comment(
+    client: &NotionClient,
+    store: &SharedStore,
+    op: &OpRec,
+) -> Result<PushOutcome, ApiError> {
+    let payload: Value = serde_json::from_str(&op.payload).unwrap_or_default();
+    let body = payload["body"].as_str().unwrap_or_default();
+    let resp = if let Some(discussion_id) = payload["thread_id"].as_str() {
+        client.create_comment_reply(discussion_id, body).await?
+    } else {
+        let parent_id = payload["parent_id"].as_str().unwrap_or_default();
+        let parent = match payload["parent_kind"].as_str() {
+            Some("block") => json!({"block_id": parent_id}),
+            _ => json!({"page_id": parent_id}),
+        };
+        client.create_comment(parent, body).await?
+    };
+    let real_id = resp["id"].as_str().unwrap_or_default().to_string();
+
+    let mut guard = store.lock().unwrap();
+    guard.rewrite_comment_id(&op.target_id, &real_id).ok();
+    guard.delete_op(op.seq).ok();
+    Ok(PushOutcome::Success)
+}
+
 async fn push_one(client: &NotionClient, store: &SharedStore, op: &OpRec) -> Result<PushOutcome, ApiError> {
     match op.op_type.as_str() {
         "update_block" => push_update_block(client, store, op).await,
@@ -240,6 +265,7 @@ async fn push_one(client: &NotionClient, store: &SharedStore, op: &OpRec) -> Res
         "create_row" => push_create_row(client, store, op).await,
         "delete_row" => push_delete_row(client, store, op).await,
         "restore_row" => push_restore_row(client, store, op).await,
+        "create_comment" => push_create_comment(client, store, op).await,
         other => Ok(PushOutcome::Failed(format!("unknown op_type {other}"))),
     }
 }
