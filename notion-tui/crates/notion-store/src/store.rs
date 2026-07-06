@@ -638,6 +638,73 @@ impl Store {
         Ok(())
     }
 
+    pub fn retry_op(&self, seq: i64) -> anyhow::Result<()> {
+        self.set_op_state(seq, "pending", None)
+    }
+
+    pub fn resolve_keep_mine(&self, seq: i64) -> anyhow::Result<()> {
+        self.conn.execute(
+            "UPDATE pending_ops SET base_edited_time = NULL, state = 'pending', error = NULL WHERE seq = ?1",
+            [seq],
+        )?;
+        Ok(())
+    }
+
+    pub fn resolve_take_theirs(&mut self, seq: i64) -> anyhow::Result<Option<ResolvedTarget>> {
+        let op = self.ops()?.into_iter().find(|o| o.seq == seq);
+        let Some(op) = op else { return Ok(None) };
+        self.delete_op(seq)?;
+
+        match op.op_type.as_str() {
+            "update_block" | "append_block" | "delete_block" | "reorder_block" => {
+                let payload: Value = serde_json::from_str(&op.payload).unwrap_or_default();
+                let page_id = payload["page_id"].as_str().unwrap_or_default().to_string();
+                let others = self.ops()?.iter().any(|o| {
+                    let p: Value = serde_json::from_str(&o.payload).unwrap_or_default();
+                    p["page_id"].as_str() == Some(page_id.as_str())
+                });
+                if !others {
+                    self.clear_page_dirty(&page_id)?;
+                }
+                Ok(Some(ResolvedTarget::Page(page_id)))
+            }
+            "update_row" | "create_row" | "delete_row" | "restore_row" => {
+                let row_id = op.target_id.clone();
+                let others = self.has_ops_for(&row_id)?;
+                if !others {
+                    self.clear_row_dirty(&row_id).ok(); // row may be a deleted temp id
+                }
+                let ds: Option<String> = self
+                    .conn
+                    .query_row("SELECT data_source_id FROM rows WHERE id = ?1", [&row_id], |r| r.get(0))
+                    .ok();
+                Ok(ds.map(|data_source_id| ResolvedTarget::Row { row_id, data_source_id }))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    pub fn resolve_conflict_merge(
+        &mut self,
+        seq: i64,
+        block_id: &str,
+        merged_text: &str,
+        remote_edited_time: &str,
+    ) -> anyhow::Result<()> {
+        let page_id: String =
+            self.conn
+                .query_row("SELECT page_id FROM blocks WHERE id = ?1", [block_id], |r| r.get(0))?;
+        self.delete_op(seq)?;
+        // Advance our record of the remote timestamp so the fresh edit's base
+        // matches what the server currently has (bypasses the dirty guard on purpose).
+        self.conn.execute(
+            "UPDATE pages SET last_edited_time = ?2 WHERE id = ?1",
+            rusqlite::params![page_id, remote_edited_time],
+        )?;
+        self.edit_update_block_text(block_id, merged_text)?;
+        Ok(())
+    }
+
     pub fn undo(&mut self, receipt: EditReceipt) -> anyhow::Result<()> {
         let still_pending = self.ops()?.iter().any(|o| o.seq == receipt.op_seq);
         if still_pending {
@@ -961,6 +1028,12 @@ pub enum Inverse {
     DeleteInsertedRow { row_id: String },
     UpdateRowProperties { row_id: String, data_source_id: String, old_properties: String },
     RestoreRow { row_id: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolvedTarget {
+    Page(String),
+    Row { row_id: String, data_source_id: String },
 }
 
 #[derive(Debug, Clone)]
