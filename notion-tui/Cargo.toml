@@ -23,3 +23,8 @@ similar = "2"
 keyring = { version = "3", features = ["sync-secret-service", "vendored"] }
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 once_cell = "1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
