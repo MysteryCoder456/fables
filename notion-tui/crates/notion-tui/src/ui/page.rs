@@ -1,18 +1,50 @@
 use std::collections::HashSet;
 
 use notion_store::{BlockRec, PageRec};
+use once_cell::sync::Lazy;
 use ratatui::layout::Rect;
+use ratatui::style::Color;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem};
 use ratatui::Frame;
+use syntect::easy::HighlightLines;
+use syntect::highlighting::ThemeSet;
+use syntect::parsing::SyntaxSet;
 
 use crate::ui::theme::Theme;
+
+static SYNTAXES: Lazy<SyntaxSet> = Lazy::new(SyntaxSet::load_defaults_newlines);
+static THEMES: Lazy<ThemeSet> = Lazy::new(ThemeSet::load_defaults);
+
+fn highlight_code_line(line: &str, language: &str) -> Line<'static> {
+    let syntax =
+        SYNTAXES.find_syntax_by_token(language).unwrap_or_else(|| SYNTAXES.find_syntax_plain_text());
+    let theme = &THEMES.themes["base16-ocean.dark"];
+    let mut h = HighlightLines::new(syntax, theme);
+    let spans: Vec<Span<'static>> = h
+        .highlight_line(line, &SYNTAXES)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(style, text)| {
+            Span::styled(
+                text.to_string(),
+                ratatui::style::Style::default().fg(Color::Rgb(
+                    style.foreground.r,
+                    style.foreground.g,
+                    style.foreground.b,
+                )),
+            )
+        })
+        .collect();
+    Line::from(spans)
+}
 
 pub struct BlockLine {
     pub block_id: String,
     pub text: String,
     pub indent: usize,
     pub link_page_id: Option<String>,
+    pub spans: Option<Line<'static>>,
 }
 
 pub struct PageView {
@@ -63,15 +95,27 @@ impl PageView {
                     let arrow = if collapsed { "▸" } else { "▾" };
                     (format!("{arrow} {}", b.plain_text), None)
                 }
-                "code" => (format!("│ {}", b.plain_text), None),
                 "quote" => (format!("┃ {}", b.plain_text), None),
                 "callout" => (format!("💡 {}", b.plain_text), None),
                 "divider" => ("────────".to_string(), None),
                 "child_page" | "child_database" => (format!("→ {}", b.plain_text), Some(b.id.clone())),
                 "paragraph" => (b.plain_text.clone(), None),
+                _ if b.block_type == "code" => {
+                    let language = payload["language"].as_str().unwrap_or("").to_string();
+                    for src_line in b.plain_text.lines() {
+                        out.push(BlockLine {
+                            block_id: b.id.clone(),
+                            text: format!("│ {src_line}"),
+                            indent,
+                            link_page_id: None,
+                            spans: Some(highlight_code_line(src_line, &language)),
+                        });
+                    }
+                    continue;
+                }
                 _ => (format!("⍰ {}", b.plain_text), None),
             };
-            out.push(BlockLine { block_id: b.id.clone(), text, indent, link_page_id: link });
+            out.push(BlockLine { block_id: b.id.clone(), text, indent, link_page_id: link, spans: None });
             if !(b.block_type == "toggle" && collapsed) {
                 self.push_children(Some(&b.id), indent + 1, out);
             }
@@ -119,7 +163,15 @@ pub fn render(f: &mut Frame, area: Rect, view: &PageView, focused: bool, theme: 
         .iter()
         .enumerate()
         .map(|(i, l)| {
-            let mut item = ListItem::new(Line::from(format!("{}{}", "  ".repeat(l.indent), l.text)));
+            let content = match &l.spans {
+                Some(styled) => {
+                    let mut spans = vec![Span::raw(format!("{}│ ", "  ".repeat(l.indent)))];
+                    spans.extend(styled.spans.iter().cloned());
+                    Line::from(spans)
+                }
+                None => Line::from(format!("{}{}", "  ".repeat(l.indent), l.text)),
+            };
+            let mut item = ListItem::new(content);
             if i == view.cursor && focused {
                 item = item.style(theme.highlight);
             }
@@ -209,5 +261,18 @@ mod tests {
         let v = PageView::new(page(), vec![rec("cp", None, 0, "child_page", "Sub page", "{}")]);
         assert_eq!(v.lines()[0].link_page_id.as_deref(), Some("cp"));
         assert_eq!(v.lines()[0].text, "→ Sub page");
+    }
+
+    #[test]
+    fn code_block_renders_per_line_with_syntax_styling() {
+        let v = PageView::new(
+            page(),
+            vec![rec("c", None, 0, "code", "let x = 1;\nlet y = 2;", r#"{"language": "rust"}"#)],
+        );
+        let lines = v.lines();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].text.contains("let x = 1;"));
+        let spans = lines[0].spans.as_ref().expect("code lines carry styled spans");
+        assert!(spans.spans.iter().any(|s| s.style.fg.is_some()));
     }
 }
