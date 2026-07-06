@@ -20,3 +20,4 @@ insta = "1"
 tempfile = "3"
 proptest = "1"
 similar = "2"
+keyring = { version = "3", features = ["sync-secret-service", "vendored"] }

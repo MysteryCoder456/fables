@@ -12,6 +12,62 @@ pub struct Config {
     pub keys: HashMap<String, String>,
 }
 
+const KEYRING_SERVICE: &str = "notion-tui";
+const KEYRING_USER: &str = "integration-token";
+
+pub fn token_from_keyring() -> Option<String> {
+    keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER).ok()?.get_password().ok()
+}
+
+pub enum TokenSink {
+    Keyring,
+    File,
+}
+
+/// Persists the token: keyring preferred; config-file fallback with 0600
+/// perms. Returns which sink was used so the caller can warn on File (spec §5).
+pub fn store_token(token: &str) -> anyhow::Result<TokenSink> {
+    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER) {
+        if entry.set_password(token).is_ok() {
+            return Ok(TokenSink::Keyring);
+        }
+    }
+    let path =
+        dirs::config_dir().ok_or_else(|| anyhow::anyhow!("no config dir"))?.join("notion-tui/config.toml");
+    write_token_file(&path, token)?;
+    Ok(TokenSink::File)
+}
+
+pub fn write_token_file(path: &std::path::Path, token: &str) -> anyhow::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut contents = std::fs::read_to_string(path).unwrap_or_default();
+    if !contents.contains("token =") {
+        contents.push_str(&format!("token = \"{token}\"\n"));
+    } else {
+        contents = contents
+            .lines()
+            .map(|l| {
+                if l.trim_start().starts_with("token =") {
+                    format!("token = \"{token}\"")
+                } else {
+                    l.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+    }
+    std::fs::write(path, contents)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
 pub fn load() -> anyhow::Result<Config> {
     let file = dirs::config_dir()
         .map(|d| d.join("notion-tui/config.toml"))
@@ -20,10 +76,11 @@ pub fn load() -> anyhow::Result<Config> {
     let default_db = dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("notion-tui/notion.db");
-    from_sources(std::env::var("NOTION_TOKEN").ok(), file.as_deref(), default_db)
+    from_sources(token_from_keyring(), std::env::var("NOTION_TOKEN").ok(), file.as_deref(), default_db)
 }
 
 pub fn from_sources(
+    keyring_token: Option<String>,
     env_token: Option<String>,
     file_contents: Option<&str>,
     default_db: PathBuf,
@@ -32,7 +89,8 @@ pub fn from_sources(
         .map(|s| s.parse())
         .transpose()?
         .unwrap_or(toml::Value::Table(Default::default()));
-    let token = env_token
+    let token = keyring_token
+        .or(env_token)
         .or_else(|| file.get("token").and_then(|v| v.as_str()).map(str::to_string))
         .ok_or_else(|| {
             anyhow::anyhow!(
@@ -73,6 +131,7 @@ mod tests {
     #[test]
     fn env_token_beats_file() {
         let cfg = from_sources(
+            None,
             Some("env-tok".into()),
             Some("token = \"file-tok\"\npoll_interval_secs = 10"),
             PathBuf::from("/tmp/x.db"),
@@ -84,20 +143,22 @@ mod tests {
 
     #[test]
     fn file_token_used_when_no_env() {
-        let cfg = from_sources(None, Some("token = \"file-tok\""), PathBuf::from("/tmp/x.db")).unwrap();
+        let cfg =
+            from_sources(None, None, Some("token = \"file-tok\""), PathBuf::from("/tmp/x.db")).unwrap();
         assert_eq!(cfg.token, "file-tok");
         assert_eq!(cfg.poll_interval_secs, 30); // default
     }
 
     #[test]
     fn missing_token_is_actionable_error() {
-        let err = from_sources(None, None, PathBuf::from("/tmp/x.db")).unwrap_err();
+        let err = from_sources(None, None, None, PathBuf::from("/tmp/x.db")).unwrap_err();
         assert!(err.to_string().contains("NOTION_TOKEN"));
     }
 
     #[test]
     fn parses_theme_mouse_editor_and_key_overrides() {
         let cfg = from_sources(
+            None,
             Some("tok".into()),
             Some(concat!(
                 "theme = \"light\"\n",
@@ -119,10 +180,37 @@ mod tests {
 
     #[test]
     fn config_defaults_when_fields_absent() {
-        let cfg = from_sources(Some("tok".into()), None, PathBuf::from("/tmp/x.db")).unwrap();
+        let cfg = from_sources(None, Some("tok".into()), None, PathBuf::from("/tmp/x.db")).unwrap();
         assert_eq!(cfg.theme, "default");
         assert!(cfg.mouse);
         assert!(cfg.editor.is_none());
         assert!(cfg.keys.is_empty());
+    }
+
+    #[test]
+    fn keyring_token_beats_env_and_file() {
+        let cfg = from_sources(
+            Some("ring-tok".into()),
+            Some("env-tok".into()),
+            Some("token = \"file-tok\""),
+            PathBuf::from("/tmp/x.db"),
+        )
+        .unwrap();
+        assert_eq!(cfg.token, "ring-tok");
+    }
+
+    #[test]
+    fn write_token_file_sets_0600() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        write_token_file(&path, "tok-123").unwrap();
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(contents.contains("token = \"tok-123\""));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
     }
 }
