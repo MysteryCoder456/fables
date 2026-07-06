@@ -1,4 +1,5 @@
 pub mod board;
+pub mod comments;
 pub mod confirm;
 pub mod input;
 pub mod page;
@@ -50,7 +51,17 @@ pub fn draw(f: &mut Frame, app: &App) {
     if !app.sidebar.hidden {
         sidebar::render(f, cols[0], &app.sidebar, matches!(app.focus, Focus::Sidebar));
     }
-    let main_area = *cols.last().unwrap();
+    let full_main = *cols.last().unwrap();
+    let main_area = if let Some(comments_state) = &app.comments {
+        let halves = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(1), Constraint::Length(36)])
+            .split(full_main);
+        comments::render(f, halves[1], comments_state);
+        halves[0]
+    } else {
+        full_main
+    };
     let main_focused = matches!(app.focus, Focus::Main);
     match &app.view {
         View::Page(view) => page::render(f, main_area, view, main_focused),

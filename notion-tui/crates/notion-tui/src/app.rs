@@ -37,6 +37,7 @@ pub enum InputPurpose {
     EditBlockText { block_id: String },
     InsertBlockAfter { page_id: String, after_block_id: Option<String> },
     NewRow { data_source_id: String, title_prop_name: String },
+    NewComment { parent_id: String, parent_kind: String, thread_id: Option<String> },
 }
 
 pub struct App {
@@ -54,6 +55,7 @@ pub struct App {
     pub pending_d: bool,
     pub undo_stack: Vec<notion_store::EditReceipt>,
     pub confirm: Option<crate::ui::confirm::ConfirmState>,
+    pub comments: Option<crate::ui::comments::CommentsState>,
     pending_editor: Option<(String, Vec<crate::markdown::Unit>)>,
     store: SharedStore,
 }
@@ -75,6 +77,7 @@ impl App {
             pending_d: false,
             undo_stack: Vec::new(),
             confirm: None,
+            comments: None,
             pending_editor: None,
             store,
         }
@@ -206,6 +209,49 @@ impl App {
         }
         self.refresh_current_view();
     }
+
+    /// Page view: prefer the cursor block's comments if it has any; else page-level.
+    /// Table/Board: the selected row is itself a page — show its comments.
+    fn open_comments(&mut self) {
+        let (parent_id, parent_kind) = match &self.view {
+            View::Page(v) => {
+                let block = v.block_id_at_cursor();
+                let page = v.page.id.clone();
+                match block {
+                    Some(b) if !self.store.lock().unwrap().comments_for(&b).unwrap_or_default().is_empty() => {
+                        (b, "block".to_string())
+                    }
+                    _ => (page, "page".to_string()),
+                }
+            }
+            View::Table(v) => match v.selected_row_id() {
+                Some(id) => (id, "page".to_string()),
+                None => return,
+            },
+            View::Board(v) => match v.selected_row_id() {
+                Some(id) => (id, "page".to_string()),
+                None => return,
+            },
+            _ => return,
+        };
+        let items = self.store.lock().unwrap().comments_for(&parent_id).unwrap_or_default();
+        self.comments = Some(crate::ui::comments::CommentsState { parent_id, parent_kind, items, cursor: 0 });
+        self.request_comment_refresh();
+    }
+
+    pub fn refresh_comments(&mut self) {
+        if let Some(panel) = &mut self.comments {
+            panel.items = self.store.lock().unwrap().comments_for(&panel.parent_id).unwrap_or_default();
+            panel.cursor = panel.cursor.min(panel.items.len().saturating_sub(1));
+        }
+    }
+
+    fn add_comment(&mut self, parent_id: &str, parent_kind: &str, thread_id: Option<&str>, body: &str) {
+        self.store.lock().unwrap().edit_add_comment(parent_id, parent_kind, thread_id, body).ok();
+        self.refresh_comments();
+    }
+
+    fn request_comment_refresh(&mut self) {} // real body added in Task 9
 
     pub fn refresh_sidebar(&mut self) {
         if let Ok(nodes) = self.store.lock().unwrap().sidebar_nodes() {
@@ -482,6 +528,9 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                         InputPurpose::NewRow { data_source_id, title_prop_name } => {
                             app.create_row(&data_source_id, &title_prop_name, &text)
                         }
+                        InputPurpose::NewComment { parent_id, parent_kind, thread_id } => {
+                            app.add_comment(&parent_id, &parent_kind, thread_id.as_deref(), &text)
+                        }
                     }
                 }
                 app.input = None;
@@ -502,10 +551,45 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    if app.comments.is_some() {
+        let action = app.comments.as_mut().unwrap().on_key(key);
+        match action {
+            crate::ui::comments::CommentsAction::None => return,
+            crate::ui::comments::CommentsAction::Close => {
+                app.comments = None;
+                return;
+            }
+            crate::ui::comments::CommentsAction::NewThread => {
+                let panel = app.comments.as_ref().unwrap();
+                app.input = Some(InputState::new("new comment", ""));
+                app.input_purpose = Some(InputPurpose::NewComment {
+                    parent_id: panel.parent_id.clone(),
+                    parent_kind: panel.parent_kind.clone(),
+                    thread_id: None,
+                });
+                return;
+            }
+            crate::ui::comments::CommentsAction::Reply => {
+                let panel = app.comments.as_ref().unwrap();
+                let thread = panel.selected_thread();
+                app.input = Some(InputState::new("reply", ""));
+                app.input_purpose = Some(InputPurpose::NewComment {
+                    parent_id: panel.parent_id.clone(),
+                    parent_kind: panel.parent_kind.clone(),
+                    thread_id: thread,
+                });
+                return;
+            }
+        }
+    }
     let opens_search = key.code == KeyCode::Char('/')
         || (key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL));
     if opens_search {
         app.search = Some(SearchState::new());
+        return;
+    }
+    if matches!(app.focus, Focus::Main) && key.code == KeyCode::Char('c') {
+        app.open_comments();
         return;
     }
     if matches!(app.focus, Focus::Main) {
