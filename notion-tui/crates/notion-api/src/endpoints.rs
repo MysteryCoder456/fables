@@ -148,6 +148,12 @@ impl NotionClient {
         Ok(v["last_edited_time"].as_str().unwrap_or_default().to_string())
     }
 
+    /// Validates the token; returns the integration's bot name.
+    pub async fn me(&self) -> Result<String, ApiError> {
+        let v = self.get_json("/v1/users/me").await?;
+        Ok(v["name"].as_str().unwrap_or_default().to_string())
+    }
+
     /// All comments attached to a block (a page id is a valid block id here).
     pub async fn list_comments(&self, block_id: &str) -> Result<Vec<Comment>, ApiError> {
         let mut out = Vec::new();

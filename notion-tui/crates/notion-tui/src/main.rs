@@ -7,7 +7,16 @@ use notion_tui::{app, config, terminal::TerminalGuard, ui};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let cfg = config::load()?;
+    let cfg = match config::load() {
+        Ok(cfg) => cfg,
+        Err(e) if e.to_string().contains("NOTION_TOKEN") => {
+            let token = notion_tui::wizard::run().await?;
+            let mut cfg = config::load()?; // reload: token now persisted
+            cfg.token = token;
+            cfg
+        }
+        Err(e) => return Err(e),
+    };
     let store = Arc::new(Mutex::new(notion_store::Store::open(&cfg.db_path)?));
     let client = notion_api::NotionClient::new(cfg.token.clone());
     let mut handle =

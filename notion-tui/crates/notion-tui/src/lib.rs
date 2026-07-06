@@ -5,3 +5,4 @@ pub mod keymap;
 pub mod markdown;
 pub mod terminal;
 pub mod ui;
+pub mod wizard;
