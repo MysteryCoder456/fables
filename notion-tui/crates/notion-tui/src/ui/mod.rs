@@ -1,8 +1,10 @@
 pub mod board;
 pub mod comments;
 pub mod confirm;
+pub mod help;
 pub mod input;
 pub mod page;
+pub mod palette;
 pub mod props;
 pub mod queue;
 pub mod search;
@@ -92,6 +94,12 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
     if let Some(confirm_state) = &app.confirm {
         confirm::render(f, confirm_state);
+    }
+    if let Some(palette_state) = &app.palette {
+        palette::render(f, palette_state);
+    }
+    if app.help_open {
+        help::render(f, &app.keymap);
     }
 }
 

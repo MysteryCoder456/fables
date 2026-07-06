@@ -79,6 +79,8 @@ pub struct App {
     pub editor_override: Option<String>,
     pub keymap: crate::keymap::Keymap,
     pub theme: crate::ui::theme::Theme,
+    pub help_open: bool,
+    pub palette: Option<crate::ui::palette::PaletteState>,
     pending_editor: Option<(String, Vec<crate::markdown::Unit>)>,
     store: SharedStore,
 }
@@ -107,6 +109,8 @@ impl App {
             editor_override: None,
             keymap: crate::keymap::Keymap::new(),
             theme: crate::ui::theme::named("default"),
+            help_open: false,
+            palette: None,
             pending_editor: None,
             store,
         }
@@ -303,6 +307,43 @@ impl App {
                 tx.send(AppMsg::Refreshed).ok();
             }
         });
+    }
+
+    pub fn toggle_board(&mut self) {
+        match std::mem::replace(&mut self.view, View::Empty) {
+            View::Table(t) => {
+                if crate::ui::board::group_property(&t.ds.schema_json).is_some() {
+                    self.view = View::Board(BoardView::new(t.ds, t.rows));
+                } else {
+                    self.view = View::Table(t);
+                }
+            }
+            View::Board(b) => {
+                self.view = View::Table(crate::ui::table::TableView::new(b.ds, b.rows));
+            }
+            other => self.view = other,
+        }
+    }
+
+    pub fn run_command(&mut self, cmd: &str) {
+        match cmd {
+            "help" => self.help_open = true,
+            "queue" => {
+                if !matches!(self.view, View::Queue(_)) {
+                    self.toggle_queue();
+                }
+            }
+            "board" | "table" => {
+                let want_board = cmd == "board";
+                let is_board = matches!(self.view, View::Board(_));
+                let is_table = matches!(self.view, View::Table(_));
+                if (want_board && is_table) || (!want_board && is_board) {
+                    self.toggle_board();
+                }
+            }
+            "quit" => self.should_quit = true,
+            _ => {}
+        }
     }
 
     pub fn toggle_queue(&mut self) {
@@ -686,6 +727,22 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
 /// Ctrl+P shortcuts that open search from any focus.
 pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     let km = app.keymap.clone();
+    if app.help_open {
+        app.help_open = false;
+        return;
+    }
+    if app.palette.is_some() {
+        let action = app.palette.as_mut().unwrap().on_key(key);
+        match action {
+            crate::ui::palette::PaletteAction::None | crate::ui::palette::PaletteAction::Changed => {}
+            crate::ui::palette::PaletteAction::Close => app.palette = None,
+            crate::ui::palette::PaletteAction::Run(cmd) => {
+                app.palette = None;
+                app.run_command(cmd);
+            }
+        }
+        return;
+    }
     if app.confirm.is_some() {
         let action = app.confirm.as_mut().unwrap().on_key(key);
         match action {
@@ -785,6 +842,14 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         app.search = Some(SearchState::new());
         return;
     }
+    if km.is("help", key) {
+        app.help_open = true;
+        return;
+    }
+    if km.is("palette", key) {
+        app.palette = Some(crate::ui::palette::PaletteState::new());
+        return;
+    }
     if matches!(app.focus, Focus::Main) && km.is("comments", key) {
         app.open_comments();
         return;
@@ -818,19 +883,7 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             }
         }
         if km.is("board", key) {
-            match std::mem::replace(&mut app.view, View::Empty) {
-                View::Table(t) => {
-                    if crate::ui::board::group_property(&t.ds.schema_json).is_some() {
-                        app.view = View::Board(BoardView::new(t.ds, t.rows));
-                    } else {
-                        app.view = View::Table(t);
-                    }
-                }
-                View::Board(b) => {
-                    app.view = View::Table(crate::ui::table::TableView::new(b.ds, b.rows));
-                }
-                other => app.view = other,
-            }
+            app.toggle_board();
             return;
         }
         if let View::Table(view) = &app.view {
