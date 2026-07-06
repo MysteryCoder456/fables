@@ -77,6 +77,7 @@ pub struct App {
     pub conflicted: u32,
     pub remote: Option<RemoteHandle>,
     pub editor_override: Option<String>,
+    pub keymap: crate::keymap::Keymap,
     pending_editor: Option<(String, Vec<crate::markdown::Unit>)>,
     store: SharedStore,
 }
@@ -103,6 +104,7 @@ impl App {
             conflicted: 0,
             remote: None,
             editor_override: None,
+            keymap: crate::keymap::Keymap::new(),
             pending_editor: None,
             store,
         }
@@ -525,30 +527,28 @@ impl App {
 }
 
 pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
-    match key.code {
-        KeyCode::Char('q') => {
-            app.should_quit = true;
-            return Action::None;
-        }
-        KeyCode::Tab => {
-            app.focus = match app.focus {
-                Focus::Sidebar => Focus::Main,
-                Focus::Main => Focus::Sidebar,
-            };
-            return Action::None;
-        }
-        KeyCode::Char('1') => {
-            app.sidebar.hidden = !app.sidebar.hidden;
-            return Action::None;
-        }
-        KeyCode::Char('u') if key.modifiers.is_empty() => {
-            app.pending_d = false;
-            return Action::Undo;
-        }
-        _ => {}
+    let km = app.keymap.clone();
+    if km.is("quit", key) {
+        app.should_quit = true;
+        return Action::None;
+    }
+    if key.code == KeyCode::Tab {
+        app.focus = match app.focus {
+            Focus::Sidebar => Focus::Main,
+            Focus::Main => Focus::Sidebar,
+        };
+        return Action::None;
+    }
+    if km.is("sidebar", key) {
+        app.sidebar.hidden = !app.sidebar.hidden;
+        return Action::None;
+    }
+    if km.is("undo", key) {
+        app.pending_d = false;
+        return Action::Undo;
     }
     if matches!(app.focus, Focus::Main) {
-        if key.code == KeyCode::Char('d') {
+        if km.is("delete", key) {
             let target_id = match &app.view {
                 View::Page(view) => view.block_id_at_cursor(),
                 View::Table(view) => view.selected_row_id(),
@@ -573,104 +573,106 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         app.pending_d = false;
     }
     if matches!(app.focus, Focus::Sidebar) {
-        match key.code {
-            KeyCode::Char('j') | KeyCode::Down => app.sidebar.move_cursor(1),
-            KeyCode::Char('k') | KeyCode::Up => app.sidebar.move_cursor(-1),
-            KeyCode::Char('h') | KeyCode::Char('l') => app.sidebar.toggle_collapse(),
-            KeyCode::Enter => {
-                if let Some(node) = app.sidebar.selected().cloned() {
-                    app.focus = Focus::Main;
-                    return Action::OpenNode(node);
-                }
+        if km.is("down", key) || key.code == KeyCode::Down {
+            app.sidebar.move_cursor(1);
+        } else if km.is("up", key) || key.code == KeyCode::Up {
+            app.sidebar.move_cursor(-1);
+        } else if km.is("left", key) || km.is("right", key) {
+            app.sidebar.toggle_collapse();
+        } else if km.is("open", key) {
+            if let Some(node) = app.sidebar.selected().cloned() {
+                app.focus = Focus::Main;
+                return Action::OpenNode(node);
             }
-            _ => {}
         }
     }
     if matches!(app.focus, Focus::Main) {
         if let View::Page(view) = &mut app.view {
-            match (key.code, key.modifiers) {
-                (KeyCode::Char('j'), _) | (KeyCode::Down, _) => view.move_cursor(1),
-                (KeyCode::Char('k'), _) | (KeyCode::Up, _) => view.move_cursor(-1),
-                (KeyCode::Char('g'), _) => view.cursor = 0,
-                (KeyCode::Char('G'), _) => view.cursor = view.lines().len().saturating_sub(1),
-                (KeyCode::Char('d'), KeyModifiers::CONTROL) => view.move_cursor(10),
-                (KeyCode::Char('u'), KeyModifiers::CONTROL) => view.move_cursor(-10),
-                (KeyCode::Char('h'), _) | (KeyCode::Char('l'), _) => view.toggle_at_cursor(),
-                (KeyCode::Char(' '), _) => {
-                    if let Some(block_id) = view.todo_block_at_cursor() {
-                        return Action::ToggleTodo(block_id);
-                    }
+            if km.is("down", key) || key.code == KeyCode::Down {
+                view.move_cursor(1);
+            } else if km.is("up", key) || key.code == KeyCode::Up {
+                view.move_cursor(-1);
+            } else if km.is("top", key) {
+                view.cursor = 0;
+            } else if km.is("bottom", key) {
+                view.cursor = view.lines().len().saturating_sub(1);
+            } else if key.code == KeyCode::Char('d') && key.modifiers == KeyModifiers::CONTROL {
+                view.move_cursor(10);
+            } else if key.code == KeyCode::Char('u') && key.modifiers == KeyModifiers::CONTROL {
+                view.move_cursor(-10);
+            } else if km.is("left", key) || km.is("right", key) {
+                view.toggle_at_cursor();
+            } else if km.is("toggle", key) {
+                if let Some(block_id) = view.todo_block_at_cursor() {
+                    return Action::ToggleTodo(block_id);
                 }
-                (KeyCode::Enter, _) => {
-                    if let Some(target) = view.link_at_cursor() {
-                        let from = view.page.id.clone();
-                        app.history.push(from);
-                        return Action::OpenPage(target);
-                    }
+            } else if km.is("open", key) {
+                if let Some(target) = view.link_at_cursor() {
+                    let from = view.page.id.clone();
+                    app.history.push(from);
+                    return Action::OpenPage(target);
                 }
-                (KeyCode::Backspace, _) | (KeyCode::Char('-'), _) => {
-                    if let Some(prev) = app.history.pop() {
-                        return Action::OpenPage(prev);
-                    }
+            } else if km.is("back", key) || key.code == KeyCode::Backspace {
+                if let Some(prev) = app.history.pop() {
+                    return Action::OpenPage(prev);
                 }
-                _ => {}
             }
         }
         if let View::Table(view) = &mut app.view {
-            match key.code {
-                KeyCode::Char('j') | KeyCode::Down => view.move_cursor(1),
-                KeyCode::Char('k') | KeyCode::Up => view.move_cursor(-1),
-                KeyCode::Char('g') => view.cursor = 0,
-                KeyCode::Char('G') => view.cursor = view.rows.len().saturating_sub(1),
-                KeyCode::Char('h') => {
-                    view.sort_col = view.sort_col.saturating_sub(1);
+            if km.is("down", key) || key.code == KeyCode::Down {
+                view.move_cursor(1);
+            } else if km.is("up", key) || key.code == KeyCode::Up {
+                view.move_cursor(-1);
+            } else if km.is("top", key) {
+                view.cursor = 0;
+            } else if km.is("bottom", key) {
+                view.cursor = view.rows.len().saturating_sub(1);
+            } else if km.is("left", key) {
+                view.sort_col = view.sort_col.saturating_sub(1);
+            } else if km.is("right", key) {
+                if view.sort_col + 1 < view.columns.len() {
+                    view.sort_col += 1;
                 }
-                KeyCode::Char('l') => {
-                    if view.sort_col + 1 < view.columns.len() {
-                        view.sort_col += 1;
-                    }
+            } else if km.is("sort", key) {
+                view.toggle_sort(view.sort_col);
+            } else if km.is("open", key) {
+                if let Some(row_id) = view.selected_row_id() {
+                    return Action::OpenPage(row_id);
                 }
-                KeyCode::Char('s') => view.toggle_sort(view.sort_col),
-                KeyCode::Enter => {
-                    if let Some(row_id) = view.selected_row_id() {
-                        return Action::OpenPage(row_id);
-                    }
-                }
-                _ => {}
             }
         }
         if let View::Board(view) = &mut app.view {
-            match (key.code, key.modifiers) {
-                (KeyCode::Char('j'), KeyModifiers::NONE) | (KeyCode::Down, _) => view.move_cursor_card(1),
-                (KeyCode::Char('k'), KeyModifiers::NONE) | (KeyCode::Up, _) => view.move_cursor_card(-1),
-                (KeyCode::Char('h'), _) => view.move_cursor_col(-1),
-                (KeyCode::Char('l'), _) => view.move_cursor_col(1),
-                (KeyCode::Char('J'), _) => {
-                    if let Some((row_id, value)) = view.move_card(1) {
-                        return Action::MoveCard {
-                            row_id,
-                            prop_name: view.group_prop.clone(),
-                            prop_type: view.group_type.clone(),
-                            value,
-                        };
-                    }
+            if (km.is("down", key) && key.modifiers == KeyModifiers::NONE) || key.code == KeyCode::Down {
+                view.move_cursor_card(1);
+            } else if (km.is("up", key) && key.modifiers == KeyModifiers::NONE) || key.code == KeyCode::Up
+            {
+                view.move_cursor_card(-1);
+            } else if km.is("left", key) {
+                view.move_cursor_col(-1);
+            } else if km.is("right", key) {
+                view.move_cursor_col(1);
+            } else if km.is("move_card_next", key) {
+                if let Some((row_id, value)) = view.move_card(1) {
+                    return Action::MoveCard {
+                        row_id,
+                        prop_name: view.group_prop.clone(),
+                        prop_type: view.group_type.clone(),
+                        value,
+                    };
                 }
-                (KeyCode::Char('K'), _) => {
-                    if let Some((row_id, value)) = view.move_card(-1) {
-                        return Action::MoveCard {
-                            row_id,
-                            prop_name: view.group_prop.clone(),
-                            prop_type: view.group_type.clone(),
-                            value,
-                        };
-                    }
+            } else if km.is("move_card_prev", key) {
+                if let Some((row_id, value)) = view.move_card(-1) {
+                    return Action::MoveCard {
+                        row_id,
+                        prop_name: view.group_prop.clone(),
+                        prop_type: view.group_type.clone(),
+                        value,
+                    };
                 }
-                (KeyCode::Enter, _) => {
-                    if let Some(row_id) = view.selected_row_id() {
-                        return Action::OpenPage(row_id);
-                    }
+            } else if km.is("open", key) {
+                if let Some(row_id) = view.selected_row_id() {
+                    return Action::OpenPage(row_id);
                 }
-                _ => {}
             }
         }
     }
@@ -681,6 +683,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
 /// `handle_key`'s Action against the store otherwise, and owns the '/' /
 /// Ctrl+P shortcuts that open search from any focus.
 pub fn dispatch_key(app: &mut App, key: KeyEvent) {
+    let km = app.keymap.clone();
     if app.confirm.is_some() {
         let action = app.confirm.as_mut().unwrap().on_key(key);
         match action {
@@ -774,19 +777,19 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             }
         }
     }
-    let opens_search = key.code == KeyCode::Char('/')
+    let opens_search = km.is("search", key)
         || (key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL));
     if opens_search {
         app.search = Some(SearchState::new());
         return;
     }
-    if matches!(app.focus, Focus::Main) && key.code == KeyCode::Char('c') {
+    if matches!(app.focus, Focus::Main) && km.is("comments", key) {
         app.open_comments();
         return;
     }
     if matches!(app.focus, Focus::Main) {
         if let View::Page(view) = &app.view {
-            if key.code == KeyCode::Char('i') {
+            if km.is("insert", key) {
                 if let Some(block_id) = view.block_id_at_cursor() {
                     let initial = view
                         .blocks
@@ -799,20 +802,20 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                     return;
                 }
             }
-            if key.code == KeyCode::Char('a') {
+            if km.is("append", key) {
                 let page_id = view.page.id.clone();
                 let after = view.block_id_at_cursor();
                 app.input = Some(InputState::new("new block", ""));
                 app.input_purpose = Some(InputPurpose::InsertBlockAfter { page_id, after_block_id: after });
                 return;
             }
-            if key.code == KeyCode::Char('e') {
+            if km.is("edit", key) {
                 let editor = crate::editor::editor_command(app.editor_override.as_deref());
                 app.edit_in_editor(move |initial| crate::editor::edit_text(&editor, initial));
                 return;
             }
         }
-        if key.code == KeyCode::Char('v') {
+        if km.is("board", key) {
             match std::mem::replace(&mut app.view, View::Empty) {
                 View::Table(t) => {
                     if crate::ui::board::group_property(&t.ds.schema_json).is_some() {
@@ -829,7 +832,7 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             return;
         }
         if let View::Table(view) = &app.view {
-            if key.code == KeyCode::Char('o') {
+            if km.is("new_row", key) {
                 if let Some(title_col) = view.columns.iter().find(|c| c.prop_type == "title") {
                     app.input = Some(InputState::new("new row", ""));
                     app.input_purpose = Some(InputPurpose::NewRow {
@@ -839,7 +842,7 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                     return;
                 }
             }
-            if key.code == KeyCode::Char('p') {
+            if km.is("props", key) {
                 if let Some(row) = view.rows.get(view.cursor) {
                     let fields = build_fields(view, row);
                     app.props = Some(PropsState::new(row.id.clone(), fields));
@@ -848,48 +851,45 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             }
         }
     }
-    if key.code == KeyCode::Char('Q') {
+    if km.is("queue", key) {
         app.toggle_queue();
         return;
     }
     if let View::Queue(q) = &mut app.view {
-        match key.code {
-            KeyCode::Char('j') | KeyCode::Down => q.move_cursor(1),
-            KeyCode::Char('k') | KeyCode::Up => q.move_cursor(-1),
-            KeyCode::Esc => app.toggle_queue(),
-            KeyCode::Char('r') => {
-                if let Some(op) = q.selected() {
-                    let seq = op.seq;
-                    app.store.lock().unwrap().retry_op(seq).ok();
-                    app.refresh_queue();
+        if km.is("down", key) || key.code == KeyCode::Down {
+            q.move_cursor(1);
+        } else if km.is("up", key) || key.code == KeyCode::Up {
+            q.move_cursor(-1);
+        } else if key.code == KeyCode::Esc {
+            app.toggle_queue();
+        } else if key.code == KeyCode::Char('r') {
+            if let Some(op) = q.selected() {
+                let seq = op.seq;
+                app.store.lock().unwrap().retry_op(seq).ok();
+                app.refresh_queue();
+            }
+        } else if key.code == KeyCode::Char('p') {
+            if let Some(op) = q.selected() {
+                let seq = op.seq;
+                app.store.lock().unwrap().resolve_keep_mine(seq).ok();
+                app.refresh_queue();
+            }
+        } else if key.code == KeyCode::Char('t') {
+            if let Some(op) = q.selected() {
+                let seq = op.seq;
+                let target = app.store.lock().unwrap().resolve_take_theirs(seq).ok().flatten();
+                if let Some(target) = target {
+                    app.request_refetch(target);
+                }
+                app.refresh_queue();
+            }
+        } else if key.code == KeyCode::Char('e') {
+            if let Some(op) = q.selected() {
+                if op.state == "conflicted" && op.op_type == "update_block" {
+                    let op = op.clone();
+                    app.request_merge(op);
                 }
             }
-            KeyCode::Char('p') => {
-                if let Some(op) = q.selected() {
-                    let seq = op.seq;
-                    app.store.lock().unwrap().resolve_keep_mine(seq).ok();
-                    app.refresh_queue();
-                }
-            }
-            KeyCode::Char('t') => {
-                if let Some(op) = q.selected() {
-                    let seq = op.seq;
-                    let target = app.store.lock().unwrap().resolve_take_theirs(seq).ok().flatten();
-                    if let Some(target) = target {
-                        app.request_refetch(target);
-                    }
-                    app.refresh_queue();
-                }
-            }
-            KeyCode::Char('e') => {
-                if let Some(op) = q.selected() {
-                    if op.state == "conflicted" && op.op_type == "update_block" {
-                        let op = op.clone();
-                        app.request_merge(op);
-                    }
-                }
-            }
-            _ => {}
         }
         return;
     }
