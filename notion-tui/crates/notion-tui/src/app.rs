@@ -76,6 +76,7 @@ pub struct App {
     pub queue_return: Option<Box<View>>,
     pub conflicted: u32,
     pub remote: Option<RemoteHandle>,
+    pub editor_override: Option<String>,
     pending_editor: Option<(String, Vec<crate::markdown::Unit>)>,
     store: SharedStore,
 }
@@ -101,6 +102,7 @@ impl App {
             queue_return: None,
             conflicted: 0,
             remote: None,
+            editor_override: None,
             pending_editor: None,
             store,
         }
@@ -805,9 +807,8 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 return;
             }
             if key.code == KeyCode::Char('e') {
-                app.edit_in_editor(|initial| {
-                    crate::editor::edit_text(&crate::editor::editor_command(), initial)
-                });
+                let editor = crate::editor::editor_command(app.editor_override.as_deref());
+                app.edit_in_editor(move |initial| crate::editor::edit_text(&editor, initial));
                 return;
             }
         }

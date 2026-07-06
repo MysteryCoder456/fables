@@ -11,9 +11,12 @@ fn restore() {
 }
 
 impl TerminalGuard {
-    pub fn enter() -> anyhow::Result<TerminalGuard> {
+    pub fn enter(mouse: bool) -> anyhow::Result<TerminalGuard> {
         enable_raw_mode()?;
-        crossterm::execute!(std::io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+        crossterm::execute!(std::io::stdout(), EnterAlternateScreen)?;
+        if mouse {
+            crossterm::execute!(std::io::stdout(), EnableMouseCapture)?;
+        }
         let prev = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
             restore();

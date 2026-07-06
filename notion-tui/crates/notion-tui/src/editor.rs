@@ -18,9 +18,12 @@ pub fn edit_text(editor_cmd: &str, initial: &str) -> anyhow::Result<String> {
     Ok(std::fs::read_to_string(&path)?)
 }
 
-/// Resolves the editor command: `$EDITOR`, falling back to `vi`.
-pub fn editor_command() -> String {
-    std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string())
+/// Resolves the editor command: config override, then `$EDITOR`, then `vi`.
+pub fn editor_command(override_: Option<&str>) -> String {
+    override_
+        .map(str::to_string)
+        .or_else(|| std::env::var("EDITOR").ok())
+        .unwrap_or_else(|| "vi".to_string())
 }
 
 #[cfg(test)]

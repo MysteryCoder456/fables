@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Debug)]
@@ -5,6 +6,10 @@ pub struct Config {
     pub token: String,
     pub poll_interval_secs: u64,
     pub db_path: PathBuf,
+    pub theme: String,
+    pub mouse: bool,
+    pub editor: Option<String>,
+    pub keys: HashMap<String, String>,
 }
 
 pub fn load() -> anyhow::Result<Config> {
@@ -46,6 +51,18 @@ pub fn from_sources(
             .and_then(|v| v.as_str())
             .map(PathBuf::from)
             .unwrap_or(default_db),
+        theme: file.get("theme").and_then(|v| v.as_str()).unwrap_or("default").to_string(),
+        mouse: file.get("mouse").and_then(|v| v.as_bool()).unwrap_or(true),
+        editor: file.get("editor").and_then(|v| v.as_str()).map(str::to_string),
+        keys: file
+            .get("keys")
+            .and_then(|v| v.as_table())
+            .map(|t| {
+                t.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default(),
     })
 }
 
@@ -76,5 +93,36 @@ mod tests {
     fn missing_token_is_actionable_error() {
         let err = from_sources(None, None, PathBuf::from("/tmp/x.db")).unwrap_err();
         assert!(err.to_string().contains("NOTION_TOKEN"));
+    }
+
+    #[test]
+    fn parses_theme_mouse_editor_and_key_overrides() {
+        let cfg = from_sources(
+            Some("tok".into()),
+            Some(concat!(
+                "theme = \"light\"\n",
+                "mouse = false\n",
+                "editor = \"nano\"\n",
+                "[keys]\n",
+                "quit = \"x\"\n",
+                "search = \"f\"\n",
+            )),
+            PathBuf::from("/tmp/x.db"),
+        )
+        .unwrap();
+        assert_eq!(cfg.theme, "light");
+        assert!(!cfg.mouse);
+        assert_eq!(cfg.editor.as_deref(), Some("nano"));
+        assert_eq!(cfg.keys.get("quit").map(String::as_str), Some("x"));
+        assert_eq!(cfg.keys.len(), 2);
+    }
+
+    #[test]
+    fn config_defaults_when_fields_absent() {
+        let cfg = from_sources(Some("tok".into()), None, PathBuf::from("/tmp/x.db")).unwrap();
+        assert_eq!(cfg.theme, "default");
+        assert!(cfg.mouse);
+        assert!(cfg.editor.is_none());
+        assert!(cfg.keys.is_empty());
     }
 }

@@ -13,10 +13,11 @@ async fn main() -> anyhow::Result<()> {
     let mut handle =
         notion_sync::spawn_sync(client, store.clone(), Duration::from_secs(cfg.poll_interval_secs));
 
-    let _guard = TerminalGuard::enter()?;
+    let _guard = TerminalGuard::enter(cfg.mouse)?;
     let mut term = ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(std::io::stdout()))?;
 
     let mut app = app::App::new(store);
+    app.editor_override = cfg.editor.clone();
     app.refresh_sidebar();
     let mut events = EventStream::new();
 
@@ -57,8 +58,9 @@ async fn main() -> anyhow::Result<()> {
                     app.refresh_comments();
                 }
                 Some(m @ app::AppMsg::MergeReady { .. }) => {
-                    app.open_merge_editor(m, |initial| {
-                        notion_tui::editor::edit_text(&notion_tui::editor::editor_command(), initial)
+                    let editor = notion_tui::editor::editor_command(app.editor_override.as_deref());
+                    app.open_merge_editor(m, move |initial| {
+                        notion_tui::editor::edit_text(&editor, initial)
                     });
                 }
                 None => {}
