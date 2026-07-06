@@ -20,6 +20,13 @@ async fn main() -> anyhow::Result<()> {
     app.refresh_sidebar();
     let mut events = EventStream::new();
 
+    // Separate client instance for interactive, user-triggered background
+    // fetches (take-theirs refetch, comment refresh, merge editor) — these are
+    // rare one-shots, so a second independent pacing budget is fine.
+    let remote_client = std::sync::Arc::new(notion_api::NotionClient::new(cfg.token.clone()));
+    let (app_tx, mut app_rx) = tokio::sync::mpsc::unbounded_channel();
+    app.remote = Some(app::RemoteHandle { client: remote_client, tx: app_tx });
+
     while !app.should_quit {
         term.draw(|f| ui::draw(f, &app))?;
         tokio::select! {
@@ -44,6 +51,18 @@ async fn main() -> anyhow::Result<()> {
                 app.pending = *handle.pending.borrow();
                 app.refresh_conflicted();
             }
+            msg = app_rx.recv() => match msg {
+                Some(app::AppMsg::Refreshed) => {
+                    app.refresh_current_view();
+                    app.refresh_comments();
+                }
+                Some(m @ app::AppMsg::MergeReady { .. }) => {
+                    app.open_merge_editor(m, |initial| {
+                        notion_tui::editor::edit_text(&notion_tui::editor::editor_command(), initial)
+                    });
+                }
+                None => {}
+            },
         }
     }
     Ok(())

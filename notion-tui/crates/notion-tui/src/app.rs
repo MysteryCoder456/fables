@@ -34,6 +34,22 @@ pub enum Action {
     Undo,
 }
 
+pub enum AppMsg {
+    Refreshed,
+    MergeReady {
+        op_seq: i64,
+        block_id: String,
+        local_text: String,
+        remote_text: String,
+        remote_edited_time: String,
+    },
+}
+
+pub struct RemoteHandle {
+    pub client: std::sync::Arc<notion_api::NotionClient>,
+    pub tx: tokio::sync::mpsc::UnboundedSender<AppMsg>,
+}
+
 pub enum InputPurpose {
     EditBlockText { block_id: String },
     InsertBlockAfter { page_id: String, after_block_id: Option<String> },
@@ -59,6 +75,7 @@ pub struct App {
     pub comments: Option<crate::ui::comments::CommentsState>,
     pub queue_return: Option<Box<View>>,
     pub conflicted: u32,
+    pub remote: Option<RemoteHandle>,
     pending_editor: Option<(String, Vec<crate::markdown::Unit>)>,
     store: SharedStore,
 }
@@ -83,6 +100,7 @@ impl App {
             comments: None,
             queue_return: None,
             conflicted: 0,
+            remote: None,
             pending_editor: None,
             store,
         }
@@ -256,7 +274,30 @@ impl App {
         self.refresh_comments();
     }
 
-    fn request_comment_refresh(&mut self) {} // real body added in Task 9
+    fn request_comment_refresh(&mut self) {
+        let Some(panel) = &self.comments else { return };
+        let Some(remote) = &self.remote else { return };
+        let (parent_id, parent_kind) = (panel.parent_id.clone(), panel.parent_kind.clone());
+        let (client, tx, store) = (remote.client.clone(), remote.tx.clone(), self.store.clone());
+        tokio::spawn(async move {
+            if let Ok(comments) = client.list_comments(&parent_id).await {
+                let recs: Vec<notion_store::CommentRec> = comments
+                    .iter()
+                    .map(|c| notion_store::CommentRec {
+                        id: c.id.clone(),
+                        parent_id: parent_id.clone(),
+                        parent_kind: parent_kind.clone(),
+                        thread_id: Some(c.discussion_id.clone()),
+                        author: c.author.clone(),
+                        body: c.body.clone(),
+                        created_time: c.created_time.clone(),
+                    })
+                    .collect();
+                store.lock().unwrap().replace_comments(&parent_id, &recs).ok();
+                tx.send(AppMsg::Refreshed).ok();
+            }
+        });
+    }
 
     pub fn toggle_queue(&mut self) {
         match std::mem::replace(&mut self.view, View::Empty) {
@@ -294,8 +335,108 @@ impl App {
         self.refresh_conflicted();
     }
 
-    pub fn request_refetch(&mut self, _target: notion_store::ResolvedTarget) {} // wired in Task 9
-    pub fn request_merge(&mut self, _op: notion_store::OpRec) {} // wired in Task 9
+    pub fn request_refetch(&mut self, target: notion_store::ResolvedTarget) {
+        let Some(remote) = &self.remote else { return };
+        let (client, tx, store) = (remote.client.clone(), remote.tx.clone(), self.store.clone());
+        tokio::spawn(async move {
+            match target {
+                notion_store::ResolvedTarget::Page(page_id) => {
+                    if let Ok(flat) = client.fetch_block_tree(&page_id).await {
+                        let recs: Vec<notion_store::BlockRec> = flat
+                            .iter()
+                            .map(|f| notion_store::BlockRec {
+                                id: f.block.id.clone(),
+                                page_id: page_id.clone(),
+                                parent_block_id: f.parent_block_id.clone(),
+                                ordinal: f.ordinal,
+                                block_type: f.block.block_type.clone(),
+                                payload: f.block.payload.to_string(),
+                                plain_text: f.block.plain_text.clone(),
+                                has_children: f.block.has_children,
+                            })
+                            .collect();
+                        store.lock().unwrap().replace_page_blocks(&page_id, &recs).ok();
+                    }
+                }
+                notion_store::ResolvedTarget::Row { data_source_id, .. } => {
+                    if let Ok(rows) = client.query_data_source_all(&data_source_id).await {
+                        let recs: Vec<notion_store::RowRec> = rows
+                            .iter()
+                            .map(|r| notion_store::RowRec {
+                                id: r.id.clone(),
+                                data_source_id: data_source_id.clone(),
+                                properties: r.properties.to_string(),
+                                last_edited_time: r.last_edited_time.clone(),
+                                archived: r.archived,
+                            })
+                            .collect();
+                        store.lock().unwrap().replace_rows(&data_source_id, &recs).ok();
+                    }
+                }
+            }
+            tx.send(AppMsg::Refreshed).ok();
+        });
+    }
+
+    pub fn request_merge(&mut self, op: notion_store::OpRec) {
+        let Some(remote) = &self.remote else { return };
+        let (client, tx, store) = (remote.client.clone(), remote.tx.clone(), self.store.clone());
+        tokio::spawn(async move {
+            let payload: serde_json::Value = serde_json::from_str(&op.payload).unwrap_or_default();
+            let page_id = payload["page_id"].as_str().unwrap_or_default().to_string();
+            let block_id = op.target_id.clone();
+            let local_text = store
+                .lock()
+                .unwrap()
+                .page_blocks(&page_id)
+                .unwrap_or_default()
+                .into_iter()
+                .find(|b| b.id == block_id)
+                .map(|b| b.plain_text)
+                .unwrap_or_default();
+
+            let (Ok(remote_time), Ok(flat)) = (
+                client.get_page_edited_time(&page_id).await,
+                client.fetch_block_tree(&page_id).await,
+            ) else {
+                return;
+            };
+            let remote_text = flat
+                .iter()
+                .find(|f| f.block.id == block_id)
+                .map(|f| f.block.plain_text.clone())
+                .unwrap_or_default();
+            tx.send(AppMsg::MergeReady {
+                op_seq: op.seq,
+                block_id,
+                local_text,
+                remote_text,
+                remote_edited_time: remote_time,
+            })
+            .ok();
+        });
+    }
+
+    pub fn open_merge_editor(
+        &mut self,
+        msg: AppMsg,
+        run_editor: impl FnOnce(&str) -> anyhow::Result<String>,
+    ) {
+        let AppMsg::MergeReady { op_seq, block_id, local_text, remote_text, remote_edited_time } = msg
+        else {
+            return;
+        };
+        let doc = format!("<<<<<<< local\n{local_text}\n=======\n{remote_text}\n>>>>>>> remote\n");
+        let Ok(merged) = run_editor(&doc) else { return };
+        let merged = merged.trim_end_matches('\n').to_string();
+        self.store
+            .lock()
+            .unwrap()
+            .resolve_conflict_merge(op_seq, &block_id, &merged, &remote_edited_time)
+            .ok();
+        self.refresh_queue();
+        self.refresh_current_view();
+    }
 
     pub fn refresh_sidebar(&mut self) {
         if let Ok(nodes) = self.store.lock().unwrap().sidebar_nodes() {
