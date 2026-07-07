@@ -81,6 +81,12 @@ pub struct App {
     pub theme: crate::ui::theme::Theme,
     pub help_open: bool,
     pub palette: Option<crate::ui::palette::PaletteState>,
+    /// Mirrors the config's mouse-capture setting so terminal handoffs
+    /// (external `$EDITOR`) can restore mouse capture on re-entry.
+    pub mouse: bool,
+    /// Set when a subprocess has drawn over the screen; the event loop must
+    /// clear the terminal before the next draw instead of diffing.
+    pub force_redraw: bool,
     pending_editor: Option<(String, Vec<crate::markdown::Unit>)>,
     store: SharedStore,
 }
@@ -111,6 +117,8 @@ impl App {
             theme: crate::ui::theme::named("default"),
             help_open: false,
             palette: None,
+            mouse: false,
+            force_redraw: false,
             pending_editor: None,
             store,
         }
@@ -201,6 +209,8 @@ impl App {
         let blocks = view.blocks.clone();
         let (md, units) = crate::markdown::blocks_to_markdown(&blocks);
 
+        // Even a failed editor run has drawn over the screen.
+        self.force_redraw = true;
         let edited = match run_editor(&md) {
             Ok(text) => text,
             Err(_) => return,
@@ -268,7 +278,13 @@ impl App {
             _ => return,
         };
         let items = self.store.lock().unwrap().comments_for(&parent_id).unwrap_or_default();
-        self.comments = Some(crate::ui::comments::CommentsState { parent_id, parent_kind, items, cursor: 0 });
+        self.comments = Some(crate::ui::comments::CommentsState {
+            parent_id,
+            parent_kind,
+            items,
+            cursor: 0,
+            list_state: ratatui::widgets::ListState::default(),
+        });
         self.request_comment_refresh();
     }
 
@@ -474,6 +490,7 @@ impl App {
             return;
         };
         let doc = format!("<<<<<<< local\n{local_text}\n=======\n{remote_text}\n>>>>>>> remote\n");
+        self.force_redraw = true;
         let Ok(merged) = run_editor(&doc) else { return };
         let merged = merged.trim_end_matches('\n').to_string();
         self.store
@@ -878,7 +895,10 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             }
             if km.is("edit", key) {
                 let editor = crate::editor::editor_command(app.editor_override.as_deref());
-                app.edit_in_editor(move |initial| crate::editor::edit_text(&editor, initial));
+                let mouse = app.mouse;
+                app.edit_in_editor(move |initial| {
+                    crate::terminal::with_suspended(mouse, || crate::editor::edit_text(&editor, initial))
+                });
                 return;
             }
         }

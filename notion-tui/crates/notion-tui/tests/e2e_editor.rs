@@ -41,10 +41,13 @@ async fn crawl_then_editor_round_trip_updates_and_inserts_blocks() {
     let node = app.sidebar.selected().cloned().unwrap();
     app.open_node(&node);
 
+    assert!(!app.force_redraw);
     app.edit_in_editor(|initial| {
         assert_eq!(initial, "First");
         Ok(format!("{initial}, edited\nSecond paragraph"))
     });
+    // The editor took over the screen, so the next frame must be a full repaint.
+    assert!(app.force_redraw);
 
     let blocks = store.lock().unwrap().page_blocks("p1").unwrap();
     assert_eq!(blocks.len(), 2);

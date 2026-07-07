@@ -1,10 +1,9 @@
 use std::io::Write;
 
 /// Writes `initial` to a scratch `.md` file, runs `editor_cmd <path>` to
-/// completion, then reads the file back. Callers are responsible for
-/// suspending/restoring the terminal's raw mode around this call (the
-/// `TerminalGuard`'s `Drop` already restores the terminal on panic, but a
-/// clean run needs an explicit temporary handoff — see Task 8).
+/// completion, then reads the file back. Callers in TUI mode must wrap this
+/// in `terminal::with_suspended` (and force a full redraw afterwards) so the
+/// editor gets a sane terminal and the TUI repaints cleanly on return.
 pub fn edit_text(editor_cmd: &str, initial: &str) -> anyhow::Result<String> {
     let mut file = tempfile::Builder::new().suffix(".md").tempfile()?;
     file.write_all(initial.as_bytes())?;

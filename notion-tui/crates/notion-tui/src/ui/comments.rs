@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use notion_store::CommentRec;
 use ratatui::layout::Rect;
 use ratatui::text::Span;
-use ratatui::widgets::{Block, Borders, List, ListItem};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 use ratatui::Frame;
 
 use crate::ui::theme::Theme;
@@ -12,6 +12,7 @@ pub struct CommentsState {
     pub parent_kind: String,
     pub items: Vec<CommentRec>,
     pub cursor: usize,
+    pub list_state: ListState,
 }
 
 pub enum CommentsAction {
@@ -46,26 +47,20 @@ impl CommentsState {
     }
 }
 
-pub fn render(f: &mut Frame, area: Rect, state: &CommentsState, theme: &Theme) {
-    let items: Vec<ListItem> = state
-        .items
-        .iter()
-        .enumerate()
-        .map(|(i, c)| {
-            let mut item = ListItem::new(format!("{}: {}", c.author, c.body));
-            if i == state.cursor {
-                item = item.style(theme.highlight);
-            }
-            item
-        })
-        .collect();
-    f.render_widget(
-        List::new(items).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(theme.border)
-                .title(Span::styled(" comments (n new · r reply) ", theme.title)),
-        ),
+pub fn render(f: &mut Frame, area: Rect, state: &mut CommentsState, theme: &Theme) {
+    let items: Vec<ListItem> =
+        state.items.iter().map(|c| ListItem::new(format!("{}: {}", c.author, c.body))).collect();
+    state.list_state.select(Some(state.cursor));
+    f.render_stateful_widget(
+        List::new(items)
+            .highlight_style(theme.highlight)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(theme.border)
+                    .title(Span::styled(" comments (n new · r reply) ", theme.title)),
+            ),
         area,
+        &mut state.list_state,
     );
 }

@@ -5,7 +5,7 @@ use once_cell::sync::Lazy;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 use ratatui::Frame;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;
@@ -51,13 +51,19 @@ pub struct PageView {
     pub page: PageRec,
     pub blocks: Vec<BlockRec>,
     pub cursor: usize,
-    pub scroll: u16,
     pub collapsed_toggles: HashSet<String>,
+    pub list_state: ListState,
 }
 
 impl PageView {
     pub fn new(page: PageRec, blocks: Vec<BlockRec>) -> PageView {
-        PageView { page, blocks, cursor: 0, scroll: 0, collapsed_toggles: HashSet::new() }
+        PageView {
+            page,
+            blocks,
+            cursor: 0,
+            collapsed_toggles: HashSet::new(),
+            list_state: ListState::default(),
+        }
     }
 
     pub fn lines(&self) -> Vec<BlockLine> {
@@ -157,12 +163,11 @@ impl PageView {
     }
 }
 
-pub fn render(f: &mut Frame, area: Rect, view: &PageView, focused: bool, theme: &Theme) {
+pub fn render(f: &mut Frame, area: Rect, view: &mut PageView, focused: bool, theme: &Theme) {
     let items: Vec<ListItem> = view
         .lines()
         .iter()
-        .enumerate()
-        .map(|(i, l)| {
+        .map(|l| {
             let content = match &l.spans {
                 Some(styled) => {
                     let mut spans = vec![Span::raw(format!("{}│ ", "  ".repeat(l.indent)))];
@@ -171,22 +176,23 @@ pub fn render(f: &mut Frame, area: Rect, view: &PageView, focused: bool, theme: 
                 }
                 None => Line::from(format!("{}{}", "  ".repeat(l.indent), l.text)),
             };
-            let mut item = ListItem::new(content);
-            if i == view.cursor && focused {
-                item = item.style(theme.highlight);
-            }
-            item
+            ListItem::new(content)
         })
         .collect();
     let title = format!(" {} ", view.page.title);
-    f.render_widget(
-        List::new(items).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(theme.border)
-                .title(Span::styled(title, theme.title)),
-        ),
+    let highlight = if focused { theme.highlight } else { ratatui::style::Style::default() };
+    view.list_state.select(Some(view.cursor));
+    f.render_stateful_widget(
+        List::new(items)
+            .highlight_style(highlight)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(theme.border)
+                    .title(Span::styled(title, theme.title)),
+            ),
         area,
+        &mut view.list_state,
     );
 }
 
@@ -261,6 +267,25 @@ mod tests {
         let v = PageView::new(page(), vec![rec("cp", None, 0, "child_page", "Sub page", "{}")]);
         assert_eq!(v.lines()[0].link_page_id.as_deref(), Some("cp"));
         assert_eq!(v.lines()[0].text, "→ Sub page");
+    }
+
+    #[test]
+    fn render_scrolls_so_cursor_stays_visible() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let blocks: Vec<BlockRec> = (0..30)
+            .map(|i| rec(&format!("b{i}"), None, i as i64, "paragraph", &format!("Line {i}"), "{}"))
+            .collect();
+        let mut v = PageView::new(page(), blocks);
+        v.cursor = 29;
+        let theme = crate::ui::theme::named("default");
+        let backend = TestBackend::new(20, 10);
+        let mut term = Terminal::new(backend).unwrap();
+        term.draw(|f| render(f, f.area(), &mut v, true, &theme)).unwrap();
+        let content: String = term.backend().buffer().content.iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("Line 29"), "cursor's row should be visible:\n{content}");
+        assert!(!content.contains("Line 0"), "top row should have scrolled out:\n{content}");
     }
 
     #[test]

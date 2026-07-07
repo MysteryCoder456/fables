@@ -2,13 +2,14 @@ use crossterm::event::{KeyCode, KeyEvent};
 use notion_store::SearchHit;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
 pub struct SearchState {
     pub input: String,
     pub results: Vec<SearchHit>,
     pub cursor: usize,
+    pub list_state: ListState,
 }
 
 #[derive(Debug)]
@@ -21,7 +22,7 @@ pub enum SearchAction {
 
 impl SearchState {
     pub fn new() -> SearchState {
-        SearchState { input: String::new(), results: Vec::new(), cursor: 0 }
+        SearchState { input: String::new(), results: Vec::new(), cursor: 0, list_state: ListState::default() }
     }
 
     /// Typing edits the query; Up/Down move the result cursor (not j/k, which must
@@ -70,7 +71,7 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     Rect { x, y, width, height }
 }
 
-pub fn render(f: &mut Frame, state: &SearchState) {
+pub fn render(f: &mut Frame, state: &mut SearchState) {
     let area = f.area();
     let popup_width = (area.width * 3 / 4).clamp(20, 80);
     let popup_height = (area.height * 3 / 4).clamp(6, 20);
@@ -88,19 +89,16 @@ pub fn render(f: &mut Frame, state: &SearchState) {
         inner[0],
     );
 
-    let items: Vec<ListItem> = state
-        .results
-        .iter()
-        .enumerate()
-        .map(|(i, h)| {
-            let mut item = ListItem::new(format!("{}  {}", h.title, h.snippet));
-            if i == state.cursor {
-                item = item.style(Style::default().add_modifier(Modifier::REVERSED));
-            }
-            item
-        })
-        .collect();
-    f.render_widget(List::new(items).block(Block::default().borders(Borders::ALL)), inner[1]);
+    let items: Vec<ListItem> =
+        state.results.iter().map(|h| ListItem::new(format!("{}  {}", h.title, h.snippet))).collect();
+    state.list_state.select(Some(state.cursor));
+    f.render_stateful_widget(
+        List::new(items)
+            .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+            .block(Block::default().borders(Borders::ALL)),
+        inner[1],
+        &mut state.list_state,
+    );
 }
 
 #[cfg(test)]

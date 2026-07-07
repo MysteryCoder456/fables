@@ -14,7 +14,7 @@ fn renders_frame_with_status_bar() {
     app.sync_status = notion_sync::SyncStatus::Idle { updated: 0 };
     let backend = TestBackend::new(60, 12);
     let mut term = Terminal::new(backend).unwrap();
-    term.draw(|f| ui::draw(f, &app)).unwrap();
+    term.draw(|f| ui::draw(f, &mut app)).unwrap();
     insta::assert_snapshot!(term.backend());
 }
 
@@ -45,7 +45,7 @@ fn renders_sidebar_tree() {
     ]);
     let backend = TestBackend::new(60, 12);
     let mut term = Terminal::new(backend).unwrap();
-    term.draw(|f| ui::draw(f, &app)).unwrap();
+    term.draw(|f| ui::draw(f, &mut app)).unwrap();
     insta::assert_snapshot!(term.backend());
 }
 
@@ -88,6 +88,6 @@ fn renders_page_view() {
 
     let backend = TestBackend::new(60, 12);
     let mut term = Terminal::new(backend).unwrap();
-    term.draw(|f| ui::draw(f, &app)).unwrap();
+    term.draw(|f| ui::draw(f, &mut app)).unwrap();
     insta::assert_snapshot!(term.backend());
 }

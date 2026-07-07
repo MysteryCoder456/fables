@@ -38,7 +38,8 @@ pub fn status_line(status: &SyncStatus, pending: u32, conflicted: u32) -> String
     out
 }
 
-pub fn draw(f: &mut Frame, app: &App) {
+pub fn draw(f: &mut Frame, app: &mut App) {
+    let theme = app.theme.clone();
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(1)])
@@ -54,27 +55,27 @@ pub fn draw(f: &mut Frame, app: &App) {
             .to_vec()
     };
 
+    let sidebar_focused = matches!(app.focus, Focus::Sidebar);
     if !app.sidebar.hidden {
-        sidebar::render(f, cols[0], &app.sidebar, matches!(app.focus, Focus::Sidebar), &app.theme);
+        sidebar::render(f, cols[0], &mut app.sidebar, sidebar_focused, &theme);
     }
     let full_main = *cols.last().unwrap();
-    let main_area = if let Some(comments_state) = &app.comments {
+    let main_area = if let Some(comments_state) = &mut app.comments {
         let halves = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Min(1), Constraint::Length(36)])
             .split(full_main);
-        comments::render(f, halves[1], comments_state, &app.theme);
+        comments::render(f, halves[1], comments_state, &theme);
         halves[0]
     } else {
         full_main
     };
     let main_focused = matches!(app.focus, Focus::Main);
-    let theme = &app.theme;
-    match &app.view {
-        View::Page(view) => page::render(f, main_area, view, main_focused, theme),
-        View::Table(view) => table::render(f, main_area, view, main_focused, theme),
-        View::Board(view) => board::render(f, main_area, view, main_focused, theme),
-        View::Queue(view) => queue::render(f, main_area, view, main_focused, theme),
+    match &mut app.view {
+        View::Page(view) => page::render(f, main_area, view, main_focused, &theme),
+        View::Table(view) => table::render(f, main_area, view, main_focused, &theme),
+        View::Board(view) => board::render(f, main_area, view, main_focused, &theme),
+        View::Queue(view) => queue::render(f, main_area, view, main_focused, &theme),
         View::Empty => f.render_widget(Block::default().borders(Borders::ALL), main_area),
     }
 
@@ -83,7 +84,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         rows[1],
     );
 
-    if let Some(search_state) = &app.search {
+    if let Some(search_state) = &mut app.search {
         search::render(f, search_state);
     }
     if let Some(input_state) = &app.input {
@@ -95,7 +96,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     if let Some(confirm_state) = &app.confirm {
         confirm::render(f, confirm_state);
     }
-    if let Some(palette_state) = &app.palette {
+    if let Some(palette_state) = &mut app.palette {
         palette::render(f, palette_state);
     }
     if app.help_open {

@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
 pub const COMMANDS: &[&str] = &["help", "queue", "board", "table", "quit"];
@@ -9,6 +9,7 @@ pub const COMMANDS: &[&str] = &["help", "queue", "board", "table", "quit"];
 pub struct PaletteState {
     pub input: String,
     pub cursor: usize,
+    pub list_state: ListState,
 }
 
 pub enum PaletteAction {
@@ -20,7 +21,7 @@ pub enum PaletteAction {
 
 impl PaletteState {
     pub fn new() -> PaletteState {
-        PaletteState { input: String::new(), cursor: 0 }
+        PaletteState { input: String::new(), cursor: 0, list_state: ListState::default() }
     }
 
     pub fn matches(&self) -> Vec<&'static str> {
@@ -77,7 +78,7 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     }
 }
 
-pub fn render(f: &mut Frame, state: &PaletteState) {
+pub fn render(f: &mut Frame, state: &mut PaletteState) {
     let area = f.area();
     let popup = centered_rect((area.width / 2).clamp(24, 50), 12, area);
     f.render_widget(Clear, popup);
@@ -89,17 +90,13 @@ pub fn render(f: &mut Frame, state: &PaletteState) {
         Paragraph::new(state.input.as_str()).block(Block::default().borders(Borders::ALL).title(" : ")),
         inner[0],
     );
-    let items: Vec<ListItem> = state
-        .matches()
-        .iter()
-        .enumerate()
-        .map(|(i, c)| {
-            let mut item = ListItem::new(*c);
-            if i == state.cursor {
-                item = item.style(Style::default().add_modifier(Modifier::REVERSED));
-            }
-            item
-        })
-        .collect();
-    f.render_widget(List::new(items).block(Block::default().borders(Borders::ALL)), inner[1]);
+    let items: Vec<ListItem> = state.matches().iter().map(|c| ListItem::new(*c)).collect();
+    state.list_state.select(Some(state.cursor));
+    f.render_stateful_widget(
+        List::new(items)
+            .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+            .block(Block::default().borders(Borders::ALL)),
+        inner[1],
+        &mut state.list_state,
+    );
 }

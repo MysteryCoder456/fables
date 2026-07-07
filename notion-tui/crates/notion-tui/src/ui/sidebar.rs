@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use notion_store::{NodeKind, TreeNode};
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 use ratatui::Frame;
 
 use crate::ui::theme::Theme;
@@ -18,11 +18,18 @@ pub struct SidebarState {
     pub collapsed: HashSet<String>,
     pub cursor: usize,
     pub hidden: bool,
+    pub list_state: ListState,
 }
 
 impl SidebarState {
     pub fn new(nodes: Vec<TreeNode>) -> SidebarState {
-        SidebarState { nodes, collapsed: HashSet::new(), cursor: 0, hidden: false }
+        SidebarState {
+            nodes,
+            collapsed: HashSet::new(),
+            cursor: 0,
+            hidden: false,
+            list_state: ListState::default(),
+        }
     }
 
     pub fn visible(&self) -> Vec<VisibleNode<'_>> {
@@ -81,33 +88,33 @@ impl SidebarState {
     }
 }
 
-pub fn render(f: &mut Frame, area: Rect, state: &SidebarState, focused: bool, theme: &Theme) {
+pub fn render(f: &mut Frame, area: Rect, state: &mut SidebarState, focused: bool, theme: &Theme) {
     let items: Vec<ListItem> = state
         .visible()
         .iter()
-        .enumerate()
-        .map(|(i, v)| {
+        .map(|v| {
             let marker = match v.node.kind {
                 NodeKind::Page => "▸ ",
                 NodeKind::DataSource => "▦ ",
             };
             let line = format!("{}{}{}", "  ".repeat(v.depth), marker, v.node.title);
-            let mut item = ListItem::new(Line::from(line));
-            if i == state.cursor && focused {
-                item = item.style(theme.highlight);
-            }
-            item
+            ListItem::new(Line::from(line))
         })
         .collect();
     let title = if focused { " notion ● " } else { " notion " };
-    f.render_widget(
-        List::new(items).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(theme.border)
-                .title(Span::styled(title, theme.title)),
-        ),
+    let highlight = if focused { theme.highlight } else { ratatui::style::Style::default() };
+    state.list_state.select(Some(state.cursor));
+    f.render_stateful_widget(
+        List::new(items)
+            .highlight_style(highlight)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(theme.border)
+                    .title(Span::styled(title, theme.title)),
+            ),
         area,
+        &mut state.list_state,
     );
 }
 
@@ -161,5 +168,32 @@ mod tests {
         assert_eq!(s.cursor, 0);
         s.move_cursor(100);
         assert_eq!(s.cursor, s.visible().len() - 1);
+    }
+
+    fn many_nodes(n: usize) -> Vec<TreeNode> {
+        (0..n)
+            .map(|i| TreeNode {
+                id: format!("p{i}"),
+                title: format!("Page {i}"),
+                parent_id: None,
+                kind: NodeKind::Page,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn render_scrolls_so_cursor_stays_visible() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut s = SidebarState::new(many_nodes(30));
+        s.cursor = 29;
+        let theme = crate::ui::theme::named("default");
+        let backend = TestBackend::new(20, 10);
+        let mut term = Terminal::new(backend).unwrap();
+        term.draw(|f| render(f, f.area(), &mut s, true, &theme)).unwrap();
+        let content: String = term.backend().buffer().content.iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("Page 29"), "cursor's row should be visible:\n{content}");
+        assert!(!content.contains("Page 0"), "top row should have scrolled out:\n{content}");
     }
 }

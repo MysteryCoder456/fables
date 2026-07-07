@@ -76,7 +76,7 @@ async fn crawl_edit_queue_push_smoke() {
     // app main.rs updates this from the sync loop's `pending` watch channel; simulate that here.
     app.pending = store.lock().unwrap().pending_count().unwrap();
     let mut term = Terminal::new(TestBackend::new(80, 20)).unwrap();
-    term.draw(|f| ui::draw(f, &app)).unwrap();
+    term.draw(|f| ui::draw(f, &mut app)).unwrap();
     let rendered = format!("{:?}", term.backend().buffer());
     assert!(rendered.contains("[x] Buy milk"));
     assert!(rendered.contains("1 pending"));

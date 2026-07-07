@@ -46,7 +46,7 @@ async fn crawl_then_browse_smoke() {
     app.open_node(&node);
 
     let mut term = Terminal::new(TestBackend::new(80, 20)).unwrap();
-    term.draw(|f| ui::draw(f, &app)).unwrap();
+    term.draw(|f| ui::draw(f, &mut app)).unwrap();
     let rendered = format!("{:?}", term.backend().buffer());
     assert!(rendered.contains("Hello Page"));
     assert!(rendered.contains("hello world"));

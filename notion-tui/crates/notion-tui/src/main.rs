@@ -26,6 +26,7 @@ async fn main() -> anyhow::Result<()> {
     let mut term = ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(std::io::stdout()))?;
 
     let mut app = app::App::new(store);
+    app.mouse = cfg.mouse;
     app.editor_override = cfg.editor.clone();
     app.keymap = notion_tui::keymap::Keymap::with_overrides(&cfg.keys);
     app.theme = notion_tui::ui::theme::named(&cfg.theme);
@@ -40,7 +41,10 @@ async fn main() -> anyhow::Result<()> {
     app.remote = Some(app::RemoteHandle { client: remote_client, tx: app_tx });
 
     while !app.should_quit {
-        term.draw(|f| ui::draw(f, &app))?;
+        if std::mem::take(&mut app.force_redraw) {
+            term.clear()?;
+        }
+        term.draw(|f| ui::draw(f, &mut app))?;
         tokio::select! {
             ev = events.next() => match ev {
                 Some(Ok(Event::Key(key))) => app::dispatch_key(&mut app, key),
@@ -70,8 +74,11 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Some(m @ app::AppMsg::MergeReady { .. }) => {
                     let editor = notion_tui::editor::editor_command(app.editor_override.as_deref());
+                    let mouse = app.mouse;
                     app.open_merge_editor(m, move |initial| {
-                        notion_tui::editor::edit_text(&editor, initial)
+                        notion_tui::terminal::with_suspended(mouse, || {
+                            notion_tui::editor::edit_text(&editor, initial)
+                        })
                     });
                 }
                 None => {}

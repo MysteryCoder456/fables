@@ -1,6 +1,6 @@
 use notion_store::{DataSourceRec, RowRec};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::widgets::{Block, Borders, List, ListItem};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 use ratatui::Frame;
 use serde_json::Value;
 
@@ -15,6 +15,7 @@ pub struct BoardView {
     pub rows: Vec<RowRec>,
     pub col: usize,
     pub card: usize,
+    pub list_state: ListState,
 }
 
 /// Picks the grouping property: first `status`, else first `select`, in schema
@@ -44,7 +45,7 @@ impl BoardView {
             group_property(&ds.schema_json).unwrap_or_else(|| ("".into(), "".into()));
         let mut columns = schema_options(&ds.schema_json, &group_prop, &group_type);
         columns.push("(none)".to_string());
-        BoardView { ds, group_prop, group_type, columns, rows, col: 0, card: 0 }
+        BoardView { ds, group_prop, group_type, columns, rows, col: 0, card: 0, list_state: ListState::default() }
     }
 
     fn row_group(&self, row: &RowRec) -> String {
@@ -90,39 +91,41 @@ impl BoardView {
     }
 }
 
-pub fn render(f: &mut Frame, area: Rect, view: &BoardView, focused: bool, theme: &Theme) {
+pub fn render(f: &mut Frame, area: Rect, view: &mut BoardView, focused: bool, theme: &Theme) {
     let n = view.columns.len().max(1) as u32;
     let constraints: Vec<Constraint> = view.columns.iter().map(|_| Constraint::Ratio(1, n)).collect();
     let cols = Layout::default().direction(Direction::Horizontal).constraints(constraints).split(area);
+    let active_col = view.col;
+    let active_card = view.card;
     for (ci, rect) in cols.iter().enumerate() {
         let cards = view.cards_in(ci);
         let items: Vec<ListItem> = cards
             .iter()
-            .enumerate()
-            .map(|(i, r)| {
+            .map(|r| {
                 let props: Value = serde_json::from_str(&r.properties).unwrap_or_default();
                 let title = props
                     .as_object()
                     .and_then(|m| m.values().find(|p| p["type"] == "title"))
                     .map(cell_text)
                     .unwrap_or_default();
-                let mut item = ListItem::new(title);
-                if focused && ci == view.col && i == view.card {
-                    item = item.style(theme.highlight);
-                }
-                item
+                ListItem::new(title)
             })
             .collect();
         let title = format!(" {} ({}) ", view.columns[ci], cards.len());
-        f.render_widget(
-            List::new(items).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(theme.border)
-                    .title(ratatui::text::Span::styled(title, theme.title)),
-            ),
-            *rect,
-        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme.border)
+            .title(ratatui::text::Span::styled(title, theme.title));
+        if focused && ci == active_col {
+            view.list_state.select(Some(active_card));
+            f.render_stateful_widget(
+                List::new(items).highlight_style(theme.highlight).block(block),
+                *rect,
+                &mut view.list_state,
+            );
+        } else {
+            f.render_widget(List::new(items).block(block), *rect);
+        }
     }
 }
 

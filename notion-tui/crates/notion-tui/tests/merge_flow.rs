@@ -37,6 +37,8 @@ fn merge_editor_shows_both_versions_and_applies_the_result() {
         assert!(initial.contains(">>>>>>> remote"));
         Ok("merged result".to_string())
     });
+    // The editor took over the screen, so the next frame must be a full repaint.
+    assert!(app.force_redraw);
 
     let s = store.lock().unwrap();
     let ops = s.ops().unwrap();
