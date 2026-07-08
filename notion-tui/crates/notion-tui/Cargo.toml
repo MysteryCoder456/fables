@@ -1,12 +1,18 @@
 [package]
 name = "notion-tui"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A keyboard-first, offline-first terminal client for Notion"
+readme = "../../README.md"
+keywords = ["notion", "tui", "terminal"]
+categories = ["command-line-utilities"]
 
 [dependencies]
-notion-api = { path = "../notion-api" }
-notion-store = { path = "../notion-store" }
-notion-sync = { path = "../notion-sync" }
+notion-tui-api = { path = "../notion-api", version = "0.1.0" }
+notion-tui-store = { path = "../notion-store", version = "0.1.0" }
+notion-tui-sync = { path = "../notion-sync", version = "0.1.0" }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 tokio = { workspace = true }

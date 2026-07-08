@@ -1,11 +1,17 @@
 [package]
-name = "notion-sync"
-version = "0.1.0"
-edition = "2021"
+name = "notion-tui-sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Background sync engine used internally by notion-tui"
+
+[lib]
+name = "notion_sync"
 
 [dependencies]
-notion-api = { path = "../notion-api" }
-notion-store = { path = "../notion-store" }
+notion-tui-api = { path = "../notion-api", version = "0.1.0" }
+notion-tui-store = { path = "../notion-store", version = "0.1.0" }
 tokio = { workspace = true }
 serde_json = { workspace = true }
 

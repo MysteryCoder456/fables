@@ -1,7 +1,13 @@
 [package]
-name = "notion-api"
-version = "0.1.0"
-edition = "2021"
+name = "notion-tui-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Notion API client used internally by notion-tui"
+
+[lib]
+name = "notion_api"
 
 [dependencies]
 reqwest = { workspace = true }

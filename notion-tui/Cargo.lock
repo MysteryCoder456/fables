@@ -1070,7 +1070,33 @@ dependencies = [
 ]
 
 [[package]]
-name = "notion-api"
+name = "notion-tui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossterm",
+ "dirs",
+ "futures",
+ "insta",
+ "keyring",
+ "notion-tui-api",
+ "notion-tui-store",
+ "notion-tui-sync",
+ "once_cell",
+ "proptest",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "similar",
+ "syntect",
+ "tempfile",
+ "tokio",
+ "toml",
+ "wiremock",
+]
+
+[[package]]
+name = "notion-tui-api"
 version = "0.1.0"
 dependencies = [
  "reqwest",
@@ -1082,7 +1108,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "notion-store"
+name = "notion-tui-store"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1092,39 +1118,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "notion-sync"
+name = "notion-tui-sync"
 version = "0.1.0"
 dependencies = [
- "notion-api",
- "notion-store",
+ "notion-tui-api",
+ "notion-tui-store",
  "serde_json",
  "tokio",
- "wiremock",
-]
-
-[[package]]
-name = "notion-tui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "crossterm",
- "dirs",
- "futures",
- "insta",
- "keyring",
- "notion-api",
- "notion-store",
- "notion-sync",
- "once_cell",
- "proptest",
- "ratatui",
- "serde",
- "serde_json",
- "similar",
- "syntect",
- "tempfile",
- "tokio",
- "toml",
  "wiremock",
 ]
 

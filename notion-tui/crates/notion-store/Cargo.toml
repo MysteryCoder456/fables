@@ -1,7 +1,13 @@
 [package]
-name = "notion-store"
-version = "0.1.0"
-edition = "2021"
+name = "notion-tui-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Local SQLite cache/store used internally by notion-tui"
+
+[lib]
+name = "notion_store"
 
 [dependencies]
 rusqlite = { workspace = true }
