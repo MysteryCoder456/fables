@@ -5,6 +5,10 @@ from a local SQLite cache; edits queue locally and sync in the background.
 
 ## Install
 
+From crates.io:
+
+    cargo install notion-tui
+
 Prebuilt static binaries: grab `notion-tui-<arch>-unknown-linux-musl` from a
 release, `chmod +x`, and put it on your `PATH`.
 
