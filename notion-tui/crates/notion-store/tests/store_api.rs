@@ -73,6 +73,23 @@ fn sidebar_excludes_rows_and_archived() {
 }
 
 #[test]
+fn get_data_source_by_database_id_finds_by_database_id_not_data_source_id() {
+    let s = Store::open_in_memory().unwrap();
+    s.upsert_data_source(&DataSourceRec {
+        id: "ds1".into(),
+        database_id: "db1".into(),
+        title: "Tasks".into(),
+        schema_json: "{}".into(),
+        last_edited_time: "t1".into(),
+    })
+    .unwrap();
+
+    let got = s.get_data_source_by_database_id("db1").unwrap().unwrap();
+    assert_eq!(got.id, "ds1");
+    assert!(s.get_data_source_by_database_id("ds1").unwrap().is_none());
+}
+
+#[test]
 fn rows_and_meta_roundtrip() {
     let mut s = Store::open_in_memory().unwrap();
     s.replace_rows(

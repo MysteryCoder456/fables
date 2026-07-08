@@ -161,6 +161,14 @@ impl PageView {
             .any(|b| b.id == id && b.block_type == "to_do")
             .then_some(id)
     }
+
+    pub fn child_database_id_at_cursor(&self) -> Option<String> {
+        let id = self.block_id_at_cursor()?;
+        self.blocks
+            .iter()
+            .any(|b| b.id == id && b.block_type == "child_database")
+            .then_some(id)
+    }
 }
 
 pub fn render(f: &mut Frame, area: Rect, view: &mut PageView, focused: bool, theme: &Theme) {

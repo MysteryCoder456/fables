@@ -209,6 +209,27 @@ impl Store {
         })
     }
 
+    pub fn get_data_source_by_database_id(
+        &self,
+        database_id: &str,
+    ) -> anyhow::Result<Option<DataSourceRec>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, database_id, title, schema_json, last_edited_time
+             FROM data_sources WHERE database_id = ?1",
+        )?;
+        let mut rows = stmt.query([database_id])?;
+        Ok(match rows.next()? {
+            Some(r) => Some(DataSourceRec {
+                id: r.get(0)?,
+                database_id: r.get(1)?,
+                title: r.get(2)?,
+                schema_json: r.get(3)?,
+                last_edited_time: r.get(4)?,
+            }),
+            None => None,
+        })
+    }
+
     pub fn rows(&self, data_source_id: &str) -> anyhow::Result<Vec<RowRec>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, data_source_id, properties, last_edited_time, archived

@@ -87,6 +87,9 @@ pub struct App {
     /// Set when a subprocess has drawn over the screen; the event loop must
     /// clear the terminal before the next draw instead of diffing.
     pub force_redraw: bool,
+    /// User-facing explanation for an action that silently found nothing to
+    /// do (e.g. opening an unsynced record). Cleared on the next keypress.
+    pub notice: Option<String>,
     pending_editor: Option<(String, Vec<crate::markdown::Unit>)>,
     store: SharedStore,
 }
@@ -119,6 +122,7 @@ impl App {
             palette: None,
             mouse: false,
             force_redraw: false,
+            notice: None,
             pending_editor: None,
             store,
         }
@@ -331,13 +335,17 @@ impl App {
                 if crate::ui::board::group_property(&t.ds.schema_json).is_some() {
                     self.view = View::Board(BoardView::new(t.ds, t.rows));
                 } else {
+                    self.notice = Some("board view needs a status or select property".into());
                     self.view = View::Table(t);
                 }
             }
             View::Board(b) => {
                 self.view = View::Table(crate::ui::table::TableView::new(b.ds, b.rows));
             }
-            other => self.view = other,
+            other => {
+                self.notice = Some("no table open to show as a board".into());
+                self.view = other;
+            }
         }
     }
 
@@ -520,12 +528,15 @@ impl App {
         let ds = guard.get_data_source(data_source_id).ok().flatten();
         let rows = guard.rows(data_source_id).unwrap_or_default();
         drop(guard);
-        if let Some(ds) = ds {
-            self.view = View::Table(TableView::new(ds, rows));
+        match ds {
+            Some(ds) => self.view = View::Table(TableView::new(ds, rows)),
+            None => self.notice = Some(format!("database not found (not synced yet?): {data_source_id}")),
         }
     }
 
-    /// Opens a page by id; if the id is actually a data source, opens the table view instead.
+    /// Opens a page by id; if the id is actually a data source or a database
+    /// (child_database blocks carry the database id, not the data source id),
+    /// opens the table view instead.
     pub fn open_page(&mut self, page_id: &str) {
         let guard = self.store.lock().unwrap();
         if let Ok(Some(page)) = guard.get_page(page_id) {
@@ -538,7 +549,16 @@ impl App {
             let rows = guard.rows(page_id).unwrap_or_default();
             drop(guard);
             self.view = View::Table(TableView::new(ds, rows));
+            return;
         }
+        if let Ok(Some(ds)) = guard.get_data_source_by_database_id(page_id) {
+            let rows = guard.rows(&ds.id).unwrap_or_default();
+            drop(guard);
+            self.view = View::Table(TableView::new(ds, rows));
+            return;
+        }
+        drop(guard);
+        self.notice = Some(format!("not found (not synced yet?): {page_id}"));
     }
 
     pub fn refresh_search(&mut self) {
@@ -744,6 +764,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
 /// Ctrl+P shortcuts that open search from any focus.
 pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     let km = app.keymap.clone();
+    app.notice = None;
     if app.help_open {
         app.help_open = false;
         return;
@@ -871,6 +892,18 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         app.open_comments();
         return;
     }
+    if matches!(app.focus, Focus::Sidebar) && km.is("board", key) {
+        if let Some(node) = app.sidebar.selected().cloned() {
+            if node.kind == NodeKind::DataSource {
+                app.focus = Focus::Main;
+                app.open_node(&node);
+                if matches!(app.view, View::Table(_)) {
+                    app.toggle_board();
+                }
+            }
+        }
+        return;
+    }
     if matches!(app.focus, Focus::Main) {
         if let View::Page(view) = &app.view {
             if km.is("insert", key) {
@@ -903,6 +936,15 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             }
         }
         if km.is("board", key) {
+            if let View::Page(view) = &app.view {
+                if let Some(target) = view.child_database_id_at_cursor() {
+                    app.open_page(&target);
+                    if matches!(app.view, View::Table(_)) {
+                        app.toggle_board();
+                    }
+                    return;
+                }
+            }
             app.toggle_board();
             return;
         }
