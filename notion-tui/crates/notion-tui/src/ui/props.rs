@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 use ratatui::Frame;
 use serde_json::{json, Value};
 
-use crate::ui::table::{cell_text, TableView};
+use crate::ui::table::{cell_text, schema_columns};
 
 pub struct PropField {
     pub name: String,
@@ -27,9 +27,9 @@ pub enum PropsAction {
     Commit { prop_name: String, prop_type: String, text: String },
 }
 
-pub fn build_fields(view: &TableView, row: &RowRec) -> Vec<PropField> {
+pub fn build_fields(schema_json: &str, row: &RowRec) -> Vec<PropField> {
     let props: Value = serde_json::from_str(&row.properties).unwrap_or_default();
-    view.columns
+    schema_columns(schema_json)
         .iter()
         .map(|c| PropField {
             name: c.name.clone(),
@@ -187,5 +187,32 @@ mod tests {
         assert_eq!(build_property_value("checkbox", "true")["checkbox"], true);
         assert_eq!(build_property_value("select", "High")["select"]["name"], "High");
         assert_eq!(build_property_value("number", "42")["number"], 42.0);
+    }
+
+    #[test]
+    fn build_fields_derives_from_schema_json_not_a_table_view() {
+        let schema_json = json!({
+            "Name": {"type": "title"},
+            "Status": {"type": "status"}
+        })
+        .to_string();
+        let row = RowRec {
+            id: "r1".into(),
+            data_source_id: "ds".into(),
+            properties: json!({
+                "Name": {"type": "title", "title": [{"plain_text": "Ship it"}]},
+                "Status": {"type": "status", "status": {"name": "Doing"}}
+            })
+            .to_string(),
+            last_edited_time: "t".into(),
+            archived: false,
+        };
+
+        let fields = build_fields(&schema_json, &row);
+
+        assert_eq!(fields[0].name, "Name");
+        assert_eq!(fields[0].value_text, "Ship it");
+        let status = fields.iter().find(|f| f.name == "Status").unwrap();
+        assert_eq!(status.value_text, "Doing");
     }
 }

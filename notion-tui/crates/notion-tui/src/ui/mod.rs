@@ -19,7 +19,13 @@ use ratatui::Frame;
 use crate::app::{App, Focus, View};
 use notion_sync::SyncStatus;
 
-pub fn status_line(status: &SyncStatus, pending: u32, conflicted: u32, notice: Option<&str>) -> String {
+pub fn status_line(
+    status: &SyncStatus,
+    pending: u32,
+    conflicted: u32,
+    notice: Option<&str>,
+    hints: Option<&str>,
+) -> String {
     let base = match status {
         SyncStatus::Starting => "starting…".into(),
         SyncStatus::Syncing { .. } => "⟳ syncing…".into(),
@@ -37,6 +43,9 @@ pub fn status_line(status: &SyncStatus, pending: u32, conflicted: u32, notice: O
     }
     if let Some(notice) = notice {
         out = format!("{out} · {notice}");
+    }
+    if let Some(hints) = hints {
+        out = format!("{out} · {hints}");
     }
     out
 }
@@ -82,9 +91,16 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         View::Empty => f.render_widget(Block::default().borders(Borders::ALL), main_area),
     }
 
+    let hints = matches!(app.view, View::Board(_)).then(|| help::board_hints(&app.keymap));
     f.render_widget(
-        Paragraph::new(status_line(&app.sync_status, app.pending, app.conflicted, app.notice.as_deref()))
-            .style(theme.status),
+        Paragraph::new(status_line(
+            &app.sync_status,
+            app.pending,
+            app.conflicted,
+            app.notice.as_deref(),
+            hints.as_deref(),
+        ))
+        .style(theme.status),
         rows[1],
     );
 
@@ -114,14 +130,14 @@ mod tests {
 
     #[test]
     fn status_line_appends_pending_count() {
-        assert_eq!(status_line(&SyncStatus::Idle { updated: 0 }, 0, 0, None), "✓ synced");
-        assert_eq!(status_line(&SyncStatus::Idle { updated: 0 }, 3, 0, None), "✓ synced · 3 pending");
+        assert_eq!(status_line(&SyncStatus::Idle { updated: 0 }, 0, 0, None, None), "✓ synced");
+        assert_eq!(status_line(&SyncStatus::Idle { updated: 0 }, 3, 0, None, None), "✓ synced · 3 pending");
     }
 
     #[test]
     fn status_line_appends_conflicted_count() {
         assert_eq!(
-            status_line(&SyncStatus::Idle { updated: 0 }, 1, 2, None),
+            status_line(&SyncStatus::Idle { updated: 0 }, 1, 2, None, None),
             "✓ synced · 1 pending · ⚠ 2 conflicted"
         );
     }
@@ -129,8 +145,16 @@ mod tests {
     #[test]
     fn status_line_appends_notice() {
         assert_eq!(
-            status_line(&SyncStatus::Idle { updated: 0 }, 0, 0, Some("no table open to show as a board")),
+            status_line(&SyncStatus::Idle { updated: 0 }, 0, 0, Some("no table open to show as a board"), None),
             "✓ synced · no table open to show as a board"
+        );
+    }
+
+    #[test]
+    fn status_line_appends_hints() {
+        assert_eq!(
+            status_line(&SyncStatus::Idle { updated: 0 }, 0, 0, None, Some("J move card right")),
+            "✓ synced · J move card right"
         );
     }
 }

@@ -64,25 +64,32 @@ pub fn cell_text(prop: &Value) -> String {
     }
 }
 
+/// Derives display columns from a data source schema: title property first,
+/// the rest alphabetically.
+pub fn schema_columns(schema_json: &str) -> Vec<Column> {
+    let schema: Value = serde_json::from_str(schema_json).unwrap_or_default();
+    let mut columns: Vec<Column> = schema
+        .as_object()
+        .map(|m| {
+            m.iter()
+                .map(|(name, def)| Column {
+                    name: name.clone(),
+                    prop_type: def["type"].as_str().unwrap_or("").into(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    columns.sort_by(|a, b| {
+        let a_title = a.prop_type == "title";
+        let b_title = b.prop_type == "title";
+        b_title.cmp(&a_title).then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    columns
+}
+
 impl TableView {
     pub fn new(ds: DataSourceRec, rows: Vec<RowRec>) -> TableView {
-        let schema: Value = serde_json::from_str(&ds.schema_json).unwrap_or_default();
-        let mut columns: Vec<Column> = schema
-            .as_object()
-            .map(|m| {
-                m.iter()
-                    .map(|(name, def)| Column {
-                        name: name.clone(),
-                        prop_type: def["type"].as_str().unwrap_or("").into(),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        columns.sort_by(|a, b| {
-            let a_title = a.prop_type == "title";
-            let b_title = b.prop_type == "title";
-            b_title.cmp(&a_title).then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-        });
+        let columns = schema_columns(&ds.schema_json);
         TableView { ds, columns, rows, cursor: 0, sort: None, sort_col: 0, table_state: TableState::default() }
     }
 
@@ -206,6 +213,14 @@ mod tests {
             last_edited_time: "t".into(),
             archived: false,
         }
+    }
+
+    #[test]
+    fn schema_columns_puts_title_first_then_alphabetical() {
+        let cols = schema_columns(&ds().schema_json);
+        let names: Vec<&str> = cols.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["Name", "Done", "Prio"]);
+        assert_eq!(cols[0].prop_type, "title");
     }
 
     #[test]

@@ -194,9 +194,15 @@ impl App {
         }
         self.refresh_current_view();
 
-        if let View::Table(view) = &self.view {
-            if let Some(row) = view.rows.iter().find(|r| r.id == row_id) {
-                let fields = build_fields(view, row);
+        if self.props.is_some() {
+            let owning_view = match &self.view {
+                View::Table(view) => Some((&view.ds, &view.rows)),
+                View::Board(view) => Some((&view.ds, &view.rows)),
+                _ => None,
+            };
+            if let Some(fields) = owning_view.and_then(|(ds, rows)| {
+                rows.iter().find(|r| r.id == row_id).map(|row| build_fields(&ds.schema_json, row))
+            }) {
                 let cursor = self.props.as_ref().map(|p| p.cursor).unwrap_or(0);
                 self.props =
                     Some(PropsState { row_id: row_id.to_string(), fields, cursor, edit_buffer: None });
@@ -588,15 +594,31 @@ impl App {
                 self.open_table(&id);
             }
             View::Board(v) => {
-                let (id, col, card) = (v.ds.id.clone(), v.col, v.card);
+                let (id, col, card, selected) = (v.ds.id.clone(), v.col, v.card, v.selected_row_id());
                 let guard = self.store.lock().unwrap();
                 let ds = guard.get_data_source(&id).ok().flatten();
                 let rows = guard.rows(&id).unwrap_or_default();
                 drop(guard);
                 if let Some(ds) = ds {
                     let mut b = BoardView::new(ds, rows);
-                    b.col = col.min(b.columns.len().saturating_sub(1));
-                    b.card = card.min(b.cards_in(b.col).len().saturating_sub(1));
+                    // Prefer re-locating the previously selected row (its group property
+                    // may have just changed, e.g. via the board props modal) over reusing
+                    // stale col/card indices that could now point at an unrelated card.
+                    let relocated = selected.and_then(|id| {
+                        b.columns.iter().enumerate().find_map(|(ci, _)| {
+                            b.cards_in(ci).iter().position(|r| r.id == id).map(|ri| (ci, ri))
+                        })
+                    });
+                    match relocated {
+                        Some((ci, ri)) => {
+                            b.col = ci;
+                            b.card = ri;
+                        }
+                        None => {
+                            b.col = col.min(b.columns.len().saturating_sub(1));
+                            b.card = card.min(b.cards_in(b.col).len().saturating_sub(1));
+                        }
+                    }
                     self.view = View::Board(b);
                 }
             }
@@ -961,7 +983,16 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             }
             if km.is("props", key) {
                 if let Some(row) = view.rows.get(view.cursor) {
-                    let fields = build_fields(view, row);
+                    let fields = build_fields(&view.ds.schema_json, row);
+                    app.props = Some(PropsState::new(row.id.clone(), fields));
+                    return;
+                }
+            }
+        }
+        if let View::Board(view) = &app.view {
+            if km.is("props", key) {
+                if let Some(row) = view.cards_in(view.col).get(view.card).copied() {
+                    let fields = build_fields(&view.ds.schema_json, row);
                     app.props = Some(PropsState::new(row.id.clone(), fields));
                     return;
                 }
