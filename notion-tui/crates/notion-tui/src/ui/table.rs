@@ -64,6 +64,16 @@ pub fn cell_text(prop: &Value) -> String {
     }
 }
 
+/// Reads the defined options for a select/status/multi_select property from
+/// the schema; empty for types that don't declare options.
+pub fn schema_options(schema_json: &str, prop: &str, prop_type: &str) -> Vec<String> {
+    let schema: Value = serde_json::from_str(schema_json).unwrap_or_default();
+    schema[prop][prop_type]["options"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|o| o["name"].as_str().map(str::to_string)).collect())
+        .unwrap_or_default()
+}
+
 /// Derives display columns from a data source schema: title property first,
 /// the rest alphabetically.
 pub fn schema_columns(schema_json: &str) -> Vec<Column> {
@@ -221,6 +231,18 @@ mod tests {
         let names: Vec<&str> = cols.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, vec!["Name", "Done", "Prio"]);
         assert_eq!(cols[0].prop_type, "title");
+    }
+
+    #[test]
+    fn schema_options_reads_defined_options_empty_when_none() {
+        let schema_json = json!({
+            "Status": {"type": "status", "status": {"options": [
+                {"name": "Todo"}, {"name": "Doing"}, {"name": "Done"}]}},
+            "Name": {"type": "title"}
+        })
+        .to_string();
+        assert_eq!(schema_options(&schema_json, "Status", "status"), vec!["Todo", "Doing", "Done"]);
+        assert_eq!(schema_options(&schema_json, "Name", "title"), Vec::<String>::new());
     }
 
     #[test]

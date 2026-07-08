@@ -205,7 +205,7 @@ impl App {
             }) {
                 let cursor = self.props.as_ref().map(|p| p.cursor).unwrap_or(0);
                 self.props =
-                    Some(PropsState { row_id: row_id.to_string(), fields, cursor, edit_buffer: None });
+                    Some(PropsState { row_id: row_id.to_string(), fields, cursor, editor: None });
             }
         }
     }

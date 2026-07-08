@@ -4,7 +4,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 use ratatui::Frame;
 use serde_json::Value;
 
-use crate::ui::table::cell_text;
+use crate::ui::table::{cell_text, schema_options};
 use crate::ui::theme::Theme;
 
 pub struct BoardView {
@@ -29,14 +29,6 @@ pub fn group_property(schema_json: &str) -> Option<(String, String)> {
         }
     }
     None
-}
-
-fn schema_options(schema_json: &str, prop: &str, prop_type: &str) -> Vec<String> {
-    let schema: Value = serde_json::from_str(schema_json).unwrap_or_default();
-    schema[prop][prop_type]["options"]
-        .as_array()
-        .map(|a| a.iter().filter_map(|o| o["name"].as_str().map(str::to_string)).collect())
-        .unwrap_or_default()
 }
 
 impl BoardView {

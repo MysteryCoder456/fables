@@ -65,16 +65,11 @@ fn p_on_a_board_opens_the_props_modal_for_the_selected_card() {
 fn committing_a_board_props_edit_updates_the_row_and_refreshes_the_modal() {
     let mut app = app_on_board();
     dispatch_key(&mut app, KeyEvent::from(KeyCode::Char('p')));
-    // Move onto the Status field and open its edit buffer.
+    // Move onto the Status field and open its option picker.
     dispatch_key(&mut app, KeyEvent::from(KeyCode::Char('j')));
     dispatch_key(&mut app, KeyEvent::from(KeyCode::Enter));
-    // Replace the buffer contents with "Done".
-    for _ in 0.."Doing".len() {
-        dispatch_key(&mut app, KeyEvent::from(KeyCode::Backspace));
-    }
-    for c in "Done".chars() {
-        dispatch_key(&mut app, KeyEvent::from(KeyCode::Char(c)));
-    }
+    // Picker is preselected on "Doing"; move down to "Done" and commit.
+    dispatch_key(&mut app, KeyEvent::from(KeyCode::Char('j')));
     dispatch_key(&mut app, KeyEvent::from(KeyCode::Enter));
 
     let props = app.props.as_ref().expect("modal should stay open after commit");
@@ -107,14 +102,9 @@ fn committing_a_group_property_edit_keeps_the_card_selected_in_its_new_column() 
 
     dispatch_key(&mut app, KeyEvent::from(KeyCode::Char('p')));
     dispatch_key(&mut app, KeyEvent::from(KeyCode::Char('j'))); // to Status field
-    dispatch_key(&mut app, KeyEvent::from(KeyCode::Enter));
-    for _ in 0.."Doing".len() {
-        dispatch_key(&mut app, KeyEvent::from(KeyCode::Backspace));
-    }
-    for c in "Done".chars() {
-        dispatch_key(&mut app, KeyEvent::from(KeyCode::Char(c)));
-    }
-    dispatch_key(&mut app, KeyEvent::from(KeyCode::Enter));
+    dispatch_key(&mut app, KeyEvent::from(KeyCode::Enter)); // open picker, preselected on "Doing"
+    dispatch_key(&mut app, KeyEvent::from(KeyCode::Char('j'))); // move to "Done"
+    dispatch_key(&mut app, KeyEvent::from(KeyCode::Enter)); // commit
 
     match &app.view {
         View::Board(b) => assert_eq!(
