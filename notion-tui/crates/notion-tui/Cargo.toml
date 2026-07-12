@@ -10,9 +10,9 @@ keywords = ["notion", "tui", "terminal"]
 categories = ["command-line-utilities"]
 
 [dependencies]
-notion-tui-api = { path = "../notion-api", version = "0.1.0" }
-notion-tui-store = { path = "../notion-store", version = "0.1.0" }
-notion-tui-sync = { path = "../notion-sync", version = "0.1.0" }
+notion-tui-api = { path = "../notion-api", version = "0.1.1" }
+notion-tui-store = { path = "../notion-store", version = "0.1.1" }
+notion-tui-sync = { path = "../notion-sync", version = "0.1.1" }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 tokio = { workspace = true }

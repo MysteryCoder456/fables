@@ -10,8 +10,8 @@ description = "Background sync engine used internally by notion-tui"
 name = "notion_sync"
 
 [dependencies]
-notion-tui-api = { path = "../notion-api", version = "0.1.0" }
-notion-tui-store = { path = "../notion-store", version = "0.1.0" }
+notion-tui-api = { path = "../notion-api", version = "0.1.1" }
+notion-tui-store = { path = "../notion-store", version = "0.1.1" }
 tokio = { workspace = true }
 serde_json = { workspace = true }
 
