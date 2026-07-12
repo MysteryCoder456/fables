@@ -26,9 +26,14 @@ pub enum TokenSink {
 
 /// Persists the token: keyring preferred; config-file fallback with 0600
 /// perms. Returns which sink was used so the caller can warn on File (spec §5).
+///
+/// Verifies the write against a fresh `Entry` before trusting the keyring: a
+/// non-persistent backend (e.g. keyring's mock store, used when a platform
+/// feature like `apple-native` isn't compiled in) can report success on
+/// `set_password` while the value is gone by the next read.
 pub fn store_token(token: &str) -> anyhow::Result<TokenSink> {
     if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER) {
-        if entry.set_password(token).is_ok() {
+        if entry.set_password(token).is_ok() && token_from_keyring().as_deref() == Some(token) {
             return Ok(TokenSink::Keyring);
         }
     }
@@ -69,6 +74,15 @@ pub fn write_token_file(path: &std::path::Path, token: &str) -> anyhow::Result<(
 }
 
 pub fn load() -> anyhow::Result<Config> {
+    load_with_token(None)
+}
+
+/// Like `load`, but `token` (when given) takes precedence over every other
+/// source. Lets a freshly-validated wizard token produce a working `Config`
+/// even if the keyring write it just performed can't be read back (spec §5
+/// defense-in-depth: `store_token`'s own read-back guard should normally
+/// catch that first, but first-run shouldn't depend on the roundtrip).
+pub fn load_with_token(token: Option<String>) -> anyhow::Result<Config> {
     let file = dirs::config_dir()
         .map(|d| d.join("notion-tui/config.toml"))
         .filter(|p| p.exists())
@@ -76,7 +90,12 @@ pub fn load() -> anyhow::Result<Config> {
     let default_db = dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("notion-tui/notion.db");
-    from_sources(token_from_keyring(), std::env::var("NOTION_TOKEN").ok(), file.as_deref(), default_db)
+    from_sources(
+        token.or_else(token_from_keyring),
+        std::env::var("NOTION_TOKEN").ok(),
+        file.as_deref(),
+        default_db,
+    )
 }
 
 pub fn from_sources(
@@ -127,6 +146,16 @@ pub fn from_sources(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wizard_token_used_when_keyring_readback_fails() {
+        // Regression test: load_with_token forwards the just-validated wizard
+        // token into from_sources' top-priority slot, so a Config can be built
+        // even when the keyring write can't be read back (e.g. a non-native
+        // platform build falling through to keyring's mock store).
+        let cfg = from_sources(Some("wizard-tok".into()), None, None, PathBuf::from("/tmp/x.db")).unwrap();
+        assert_eq!(cfg.token, "wizard-tok");
+    }
 
     #[test]
     fn env_token_beats_file() {

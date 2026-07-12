@@ -11,9 +11,7 @@ async fn main() -> anyhow::Result<()> {
         Ok(cfg) => cfg,
         Err(e) if e.to_string().contains("NOTION_TOKEN") => {
             let token = notion_tui::wizard::run().await?;
-            let mut cfg = config::load()?; // reload: token now persisted
-            cfg.token = token;
-            cfg
+            config::load_with_token(Some(token))?
         }
         Err(e) => return Err(e),
     };
