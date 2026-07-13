@@ -19,10 +19,20 @@ pub struct PropField {
 /// only used when the schema defines options for that field; otherwise every
 /// type (including select/status without options) falls back to Text.
 pub enum Editor {
-    Text { buffer: String, error: Option<String> },
+    Text {
+        buffer: String,
+        error: Option<String>,
+    },
     /// `options[0]` is always the synthetic "(clear)" entry.
-    Select { options: Vec<String>, cursor: usize },
-    MultiSelect { options: Vec<String>, checked: Vec<bool>, cursor: usize },
+    Select {
+        options: Vec<String>,
+        cursor: usize,
+    },
+    MultiSelect {
+        options: Vec<String>,
+        checked: Vec<bool>,
+        cursor: usize,
+    },
 }
 
 pub struct PropsState {
@@ -30,12 +40,32 @@ pub struct PropsState {
     pub fields: Vec<PropField>,
     pub cursor: usize,
     pub editor: Option<Editor>,
+    pub read_only_notice: Option<String>,
 }
+
+/// Property types notion-tui cannot faithfully round-trip yet. Editing these
+/// is refused rather than risk silently wiping the property in Notion.
+pub const READ_ONLY_TYPES: &[&str] = &[
+    "relation",
+    "people",
+    "files",
+    "formula",
+    "rollup",
+    "created_time",
+    "created_by",
+    "last_edited_time",
+    "last_edited_by",
+    "unique_id",
+];
 
 pub enum PropsAction {
     None,
     Close,
-    Commit { prop_name: String, prop_type: String, text: String },
+    Commit {
+        prop_name: String,
+        prop_type: String,
+        text: String,
+    },
 }
 
 pub fn build_fields(schema_json: &str, row: &RowRec) -> Vec<PropField> {
@@ -53,7 +83,13 @@ pub fn build_fields(schema_json: &str, row: &RowRec) -> Vec<PropField> {
 
 impl PropsState {
     pub fn new(row_id: String, fields: Vec<PropField>) -> PropsState {
-        PropsState { row_id, fields, cursor: 0, editor: None }
+        PropsState {
+            row_id,
+            fields,
+            cursor: 0,
+            editor: None,
+            read_only_notice: None,
+        }
     }
 
     pub fn on_key(&mut self, key: KeyEvent) -> PropsAction {
@@ -72,7 +108,11 @@ impl PropsState {
                                 let prop_name = field.name.clone();
                                 let prop_type = field.prop_type.clone();
                                 self.editor = None;
-                                PropsAction::Commit { prop_name, prop_type, text }
+                                PropsAction::Commit {
+                                    prop_name,
+                                    prop_type,
+                                    text,
+                                }
                             }
                             Err(msg) => {
                                 *error = Some(msg);
@@ -107,16 +147,28 @@ impl PropsState {
                     }
                     KeyCode::Enter => {
                         let chosen = &options[*cursor];
-                        let text = if chosen == "(clear)" { String::new() } else { chosen.clone() };
+                        let text = if chosen == "(clear)" {
+                            String::new()
+                        } else {
+                            chosen.clone()
+                        };
                         let field = &self.fields[self.cursor];
                         let prop_name = field.name.clone();
                         let prop_type = field.prop_type.clone();
                         self.editor = None;
-                        PropsAction::Commit { prop_name, prop_type, text }
+                        PropsAction::Commit {
+                            prop_name,
+                            prop_type,
+                            text,
+                        }
                     }
                     _ => PropsAction::None,
                 },
-                Editor::MultiSelect { options, checked, cursor } => match key.code {
+                Editor::MultiSelect {
+                    options,
+                    checked,
+                    cursor,
+                } => match key.code {
                     KeyCode::Esc => {
                         self.editor = None;
                         PropsAction::None
@@ -145,7 +197,11 @@ impl PropsState {
                         let prop_name = field.name.clone();
                         let prop_type = field.prop_type.clone();
                         self.editor = None;
-                        PropsAction::Commit { prop_name, prop_type, text }
+                        PropsAction::Commit {
+                            prop_name,
+                            prop_type,
+                            text,
+                        }
                     }
                     _ => PropsAction::None,
                 },
@@ -154,40 +210,60 @@ impl PropsState {
             match key.code {
                 KeyCode::Esc => PropsAction::Close,
                 KeyCode::Char('j') | KeyCode::Down => {
+                    self.read_only_notice = None;
                     if !self.fields.is_empty() {
                         self.cursor = (self.cursor + 1).min(self.fields.len() - 1);
                     }
                     PropsAction::None
                 }
                 KeyCode::Char('k') | KeyCode::Up => {
+                    self.read_only_notice = None;
                     self.cursor = self.cursor.saturating_sub(1);
                     PropsAction::None
                 }
                 KeyCode::Enter => {
                     if let Some(field) = self.fields.get(self.cursor) {
+                        if READ_ONLY_TYPES.contains(&field.prop_type.as_str()) {
+                            self.read_only_notice =
+                                Some(format!("{} properties are read-only (v1)", field.prop_type));
+                            return PropsAction::None;
+                        }
                         if field.prop_type == "checkbox" {
-                            let toggled = if field.value_text == "☑" { "false" } else { "true" };
+                            let toggled = if field.value_text == "☑" {
+                                "false"
+                            } else {
+                                "true"
+                            };
                             return PropsAction::Commit {
                                 prop_name: field.name.clone(),
                                 prop_type: field.prop_type.clone(),
                                 text: toggled.to_string(),
                             };
                         }
-                        self.editor = Some(if field.prop_type == "multi_select" && !field.options.is_empty() {
-                            let checked = field
-                                .options
-                                .iter()
-                                .map(|o| field.value_text.split(", ").any(|v| v == o))
-                                .collect();
-                            Editor::MultiSelect { options: field.options.clone(), checked, cursor: 0 }
-                        } else if !field.options.is_empty() {
-                            let mut options = vec!["(clear)".to_string()];
-                            options.extend(field.options.iter().cloned());
-                            let cursor = options.iter().position(|o| o == &field.value_text).unwrap_or(0);
-                            Editor::Select { options, cursor }
-                        } else {
-                            Editor::Text { buffer: field.value_text.clone(), error: None }
-                        });
+                        self.editor = Some(
+                            if field.prop_type == "multi_select" && !field.options.is_empty() {
+                                let checked = field
+                                    .options
+                                    .iter()
+                                    .map(|o| field.value_text.split(", ").any(|v| v == o))
+                                    .collect();
+                                Editor::MultiSelect {
+                                    options: field.options.clone(),
+                                    checked,
+                                    cursor: 0,
+                                }
+                            } else if !field.options.is_empty() {
+                                let mut options = vec!["(clear)".to_string()];
+                                options.extend(field.options.iter().cloned());
+                                let cursor = options.iter().position(|o| o == &field.value_text).unwrap_or(0);
+                                Editor::Select { options, cursor }
+                            } else {
+                                Editor::Text {
+                                    buffer: field.value_text.clone(),
+                                    error: None,
+                                }
+                            },
+                        );
                     }
                     PropsAction::None
                 }
@@ -228,7 +304,10 @@ pub fn validate_input(prop_type: &str, text: &str) -> Result<(), String> {
         return Ok(());
     }
     match prop_type {
-        "number" => text.parse::<f64>().map(|_| ()).map_err(|_| "not a number".to_string()),
+        "number" => text
+            .parse::<f64>()
+            .map(|_| ())
+            .map_err(|_| "not a number".to_string()),
         "date" => {
             if is_valid_date(text) {
                 Ok(())
@@ -265,8 +344,15 @@ pub fn validate_input(prop_type: &str, text: &str) -> Result<(), String> {
 }
 
 /// Converts a raw text edit back into a full Notion property value for the given type.
-pub fn build_property_value(prop_type: &str, text: &str) -> Value {
-    match prop_type {
+///
+/// Returns `None` for any type this can't be faithfully rebuilt for (relation, people,
+/// files, formula, rollup, and other read-only/computed types, plus any unknown type) —
+/// committing those as `Value::Null` would silently wipe the property in Notion.
+pub fn build_property_value(prop_type: &str, text: &str, existing: Option<&Value>) -> Option<Value> {
+    if READ_ONLY_TYPES.contains(&prop_type) {
+        return None;
+    }
+    Some(match prop_type {
         "title" => {
             json!({"type": "title", "title": [{"type": "text", "text": {"content": text}, "plain_text": text}]})
         }
@@ -275,24 +361,42 @@ pub fn build_property_value(prop_type: &str, text: &str) -> Value {
         }
         "number" => json!({"type": "number", "number": text.parse::<f64>().ok()}),
         "select" => {
-            if text.is_empty() { json!({"type": "select", "select": null}) }
-            else { json!({"type": "select", "select": {"name": text}}) }
+            if text.is_empty() {
+                json!({"type": "select", "select": null})
+            } else {
+                json!({"type": "select", "select": {"name": text}})
+            }
         }
         "status" => {
-            if text.is_empty() { json!({"type": "status", "status": null}) }
-            else { json!({"type": "status", "status": {"name": text}}) }
+            if text.is_empty() {
+                json!({"type": "status", "status": null})
+            } else {
+                json!({"type": "status", "status": {"name": text}})
+            }
         }
         "multi_select" => json!({
             "type": "multi_select",
             "multi_select": text.split(',').map(|s| json!({"name": s.trim()})).collect::<Vec<_>>()
         }),
-        "date" => json!({"type": "date", "date": {"start": text}}),
+        "date" => {
+            let mut date = json!({"start": text});
+            if let Some(old) = existing.and_then(|e| e.get("date")) {
+                for k in ["end", "time_zone"] {
+                    if let Some(v) = old.get(k) {
+                        if !v.is_null() {
+                            date[k] = v.clone();
+                        }
+                    }
+                }
+            }
+            json!({"type": "date", "date": date})
+        }
         "checkbox" => json!({"type": "checkbox", "checkbox": text == "true"}),
         "url" => json!({"type": "url", "url": text}),
         "email" => json!({"type": "email", "email": text}),
         "phone_number" => json!({"type": "phone_number", "phone_number": text}),
-        _ => Value::Null,
-    }
+        _ => return None,
+    })
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
@@ -319,8 +423,11 @@ pub fn render(f: &mut Frame, state: &PropsState) {
                     None => buffer.clone(),
                 };
                 f.render_widget(
-                    Paragraph::new(text)
-                        .block(Block::default().borders(Borders::ALL).title(format!(" {} ", field.name))),
+                    Paragraph::new(text).block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(format!(" {} ", field.name)),
+                    ),
                     popup,
                 );
             }
@@ -345,7 +452,11 @@ pub fn render(f: &mut Frame, state: &PropsState) {
                     popup,
                 );
             }
-            Editor::MultiSelect { options, checked, cursor } => {
+            Editor::MultiSelect {
+                options,
+                checked,
+                cursor,
+            } => {
                 let items: Vec<ListItem> = options
                     .iter()
                     .zip(checked.iter())
@@ -360,11 +471,10 @@ pub fn render(f: &mut Frame, state: &PropsState) {
                     })
                     .collect();
                 f.render_widget(
-                    List::new(items).block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title(format!(" {} (space toggle · enter commit · esc cancel) ", field.name)),
-                    ),
+                    List::new(items).block(Block::default().borders(Borders::ALL).title(format!(
+                        " {} (space toggle · enter commit · esc cancel) ",
+                        field.name
+                    ))),
                     popup,
                 );
             }
@@ -372,7 +482,7 @@ pub fn render(f: &mut Frame, state: &PropsState) {
         return;
     }
 
-    let items: Vec<ListItem> = state
+    let mut items: Vec<ListItem> = state
         .fields
         .iter()
         .enumerate()
@@ -384,6 +494,9 @@ pub fn render(f: &mut Frame, state: &PropsState) {
             item
         })
         .collect();
+    if let Some(notice) = &state.read_only_notice {
+        items.push(ListItem::new(format!("({notice})")));
+    }
     f.render_widget(
         List::new(items).block(Block::default().borders(Borders::ALL).title(" properties ")),
         popup,
@@ -405,8 +518,10 @@ mod tests {
 
     #[test]
     fn enter_on_option_field_opens_select_preselected_on_current_value() {
-        let mut state =
-            PropsState::new("r1".into(), vec![field_with_options("status", "Doing", &["Todo", "Doing", "Done"])]);
+        let mut state = PropsState::new(
+            "r1".into(),
+            vec![field_with_options("status", "Doing", &["Todo", "Doing", "Done"])],
+        );
         state.on_key(KeyEvent::from(KeyCode::Enter));
         match state.editor {
             Some(Editor::Select { ref options, cursor }) => {
@@ -419,13 +534,19 @@ mod tests {
 
     #[test]
     fn select_editor_enter_commits_the_highlighted_option() {
-        let mut state =
-            PropsState::new("r1".into(), vec![field_with_options("status", "Doing", &["Todo", "Doing", "Done"])]);
+        let mut state = PropsState::new(
+            "r1".into(),
+            vec![field_with_options("status", "Doing", &["Todo", "Doing", "Done"])],
+        );
         state.on_key(KeyEvent::from(KeyCode::Enter));
         state.on_key(KeyEvent::from(KeyCode::Char('j'))); // Doing -> Done
         let action = state.on_key(KeyEvent::from(KeyCode::Enter));
         match action {
-            PropsAction::Commit { prop_name, prop_type, text } => {
+            PropsAction::Commit {
+                prop_name,
+                prop_type,
+                text,
+            } => {
                 assert_eq!(prop_name, "Status");
                 assert_eq!(prop_type, "status");
                 assert_eq!(text, "Done");
@@ -437,8 +558,10 @@ mod tests {
 
     #[test]
     fn select_editor_clear_entry_commits_empty_text() {
-        let mut state =
-            PropsState::new("r1".into(), vec![field_with_options("status", "Doing", &["Todo", "Doing", "Done"])]);
+        let mut state = PropsState::new(
+            "r1".into(),
+            vec![field_with_options("status", "Doing", &["Todo", "Doing", "Done"])],
+        );
         state.on_key(KeyEvent::from(KeyCode::Enter));
         state.on_key(KeyEvent::from(KeyCode::Char('k')));
         state.on_key(KeyEvent::from(KeyCode::Char('k'))); // cursor 2 -> 1 -> 0 == (clear)
@@ -453,7 +576,11 @@ mod tests {
     fn multi_select_space_toggles_then_enter_commits_joined_set() {
         let mut state = PropsState::new(
             "r1".into(),
-            vec![field_with_options("multi_select", "bug", &["bug", "infra", "urgent"])],
+            vec![field_with_options(
+                "multi_select",
+                "bug",
+                &["bug", "infra", "urgent"],
+            )],
         );
         state.on_key(KeyEvent::from(KeyCode::Enter));
         state.on_key(KeyEvent::from(KeyCode::Char('j')));
@@ -470,7 +597,12 @@ mod tests {
     fn invalid_number_keeps_editor_open_with_error_then_clears_on_keystroke() {
         let mut state = PropsState::new(
             "r1".into(),
-            vec![PropField { name: "Age".into(), prop_type: "number".into(), value_text: "".into(), options: vec![] }],
+            vec![PropField {
+                name: "Age".into(),
+                prop_type: "number".into(),
+                value_text: "".into(),
+                options: vec![],
+            }],
         );
         state.on_key(KeyEvent::from(KeyCode::Enter));
         for c in "abc".chars() {
@@ -493,7 +625,12 @@ mod tests {
     fn option_type_without_defined_options_falls_back_to_text_editor() {
         let mut state = PropsState::new(
             "r1".into(),
-            vec![PropField { name: "Priority".into(), prop_type: "select".into(), value_text: "".into(), options: vec![] }],
+            vec![PropField {
+                name: "Priority".into(),
+                prop_type: "select".into(),
+                value_text: "".into(),
+                options: vec![],
+            }],
         );
         state.on_key(KeyEvent::from(KeyCode::Enter));
         assert!(matches!(state.editor, Some(Editor::Text { .. })));
@@ -569,9 +706,66 @@ mod tests {
 
     #[test]
     fn build_property_value_variants() {
-        assert_eq!(build_property_value("checkbox", "true")["checkbox"], true);
-        assert_eq!(build_property_value("select", "High")["select"]["name"], "High");
-        assert_eq!(build_property_value("number", "42")["number"], 42.0);
+        assert_eq!(
+            build_property_value("checkbox", "true", None).unwrap()["checkbox"],
+            true
+        );
+        assert_eq!(
+            build_property_value("select", "High", None).unwrap()["select"]["name"],
+            "High"
+        );
+        assert_eq!(
+            build_property_value("number", "42", None).unwrap()["number"],
+            42.0
+        );
+    }
+
+    #[test]
+    fn refuses_to_build_values_for_unsupported_types() {
+        for t in [
+            "relation",
+            "people",
+            "files",
+            "formula",
+            "rollup",
+            "created_time",
+            "totally_new_type",
+        ] {
+            assert!(
+                build_property_value(t, "anything", None).is_none(),
+                "{t} must refuse"
+            );
+        }
+    }
+
+    #[test]
+    fn date_edit_preserves_existing_end_and_timezone() {
+        let existing = serde_json::json!({"type": "date", "date": {"start": "2026-01-01", "end": "2026-02-01", "time_zone": "America/Toronto"}});
+        let v = build_property_value("date", "2026-01-15", Some(&existing)).unwrap();
+        assert_eq!(v["date"]["start"], "2026-01-15");
+        assert_eq!(v["date"]["end"], "2026-02-01");
+        assert_eq!(v["date"]["time_zone"], "America/Toronto");
+    }
+
+    fn props_state_with_field(name: &str, prop_type: &str, value_text: &str) -> PropsState {
+        PropsState::new(
+            "r1".into(),
+            vec![PropField {
+                name: name.into(),
+                prop_type: prop_type.into(),
+                value_text: value_text.into(),
+                options: vec![],
+            }],
+        )
+    }
+
+    #[test]
+    fn enter_on_relation_field_does_not_open_editor() {
+        let mut st = props_state_with_field("Linked", "relation", "2 linked");
+        let act = st.on_key(crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Enter));
+        assert!(matches!(act, PropsAction::None));
+        assert!(st.editor.is_none());
+        assert!(st.read_only_notice.as_deref().unwrap_or("").contains("read-only"));
     }
 
     #[test]

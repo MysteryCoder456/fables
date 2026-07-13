@@ -40,13 +40,24 @@ pub fn cell_text(prop: &Value) -> String {
         "rich_text" => rich_text_plain(&prop["rich_text"]),
         "number" => prop["number"]
             .as_f64()
-            .map(|n| if n.fract() == 0.0 { format!("{}", n as i64) } else { n.to_string() })
+            .map(|n| {
+                if n.fract() == 0.0 {
+                    format!("{}", n as i64)
+                } else {
+                    n.to_string()
+                }
+            })
             .unwrap_or_default(),
         "select" => prop["select"]["name"].as_str().unwrap_or("").into(),
         "status" => prop["status"]["name"].as_str().unwrap_or("").into(),
         "multi_select" => prop["multi_select"]
             .as_array()
-            .map(|a| a.iter().filter_map(|x| x["name"].as_str()).collect::<Vec<_>>().join(", "))
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x["name"].as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
             .unwrap_or_default(),
         "date" => prop["date"]["start"].as_str().unwrap_or("").into(),
         "checkbox" => {
@@ -59,7 +70,10 @@ pub fn cell_text(prop: &Value) -> String {
         "url" => prop["url"].as_str().unwrap_or("").into(),
         "email" => prop["email"].as_str().unwrap_or("").into(),
         "phone_number" => prop["phone_number"].as_str().unwrap_or("").into(),
-        "people" => prop["people"].as_array().map(|a| format!("👤 {}", a.len())).unwrap_or_default(),
+        "people" => prop["people"]
+            .as_array()
+            .map(|a| format!("👤 {}", a.len()))
+            .unwrap_or_default(),
         _ => String::new(),
     }
 }
@@ -70,7 +84,11 @@ pub fn schema_options(schema_json: &str, prop: &str, prop_type: &str) -> Vec<Str
     let schema: Value = serde_json::from_str(schema_json).unwrap_or_default();
     schema[prop][prop_type]["options"]
         .as_array()
-        .map(|a| a.iter().filter_map(|o| o["name"].as_str().map(str::to_string)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|o| o["name"].as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -92,7 +110,9 @@ pub fn schema_columns(schema_json: &str) -> Vec<Column> {
     columns.sort_by(|a, b| {
         let a_title = a.prop_type == "title";
         let b_title = b.prop_type == "title";
-        b_title.cmp(&a_title).then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        b_title
+            .cmp(&a_title)
+            .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
     columns
 }
@@ -100,7 +120,15 @@ pub fn schema_columns(schema_json: &str) -> Vec<Column> {
 impl TableView {
     pub fn new(ds: DataSourceRec, rows: Vec<RowRec>) -> TableView {
         let columns = schema_columns(&ds.schema_json);
-        TableView { ds, columns, rows, cursor: 0, sort: None, sort_col: 0, table_state: TableState::default() }
+        TableView {
+            ds,
+            columns,
+            rows,
+            cursor: 0,
+            sort: None,
+            sort_col: 0,
+            table_state: TableState::default(),
+        }
     }
 
     pub fn cell(&self, row: &RowRec, col: &Column) -> String {
@@ -114,7 +142,24 @@ impl TableView {
             _ => true,
         };
         self.sort = Some((col_idx, asc));
-        let col_name = self.columns[col_idx].name.clone();
+        self.apply_sort();
+        self.cursor = 0;
+    }
+
+    /// Re-applies the current `self.sort` (if any) to `self.rows` in place,
+    /// without touching `self.cursor`. Used both by `toggle_sort` and by
+    /// refresh flows that need to restore a previously chosen sort onto a
+    /// freshly loaded row set.
+    ///
+    /// If `sort` references a column that no longer exists (e.g. the schema
+    /// shrank between refreshes), the sort is dropped instead of panicking.
+    pub fn apply_sort(&mut self) {
+        let Some((col_idx, asc)) = self.sort else { return };
+        let Some(col) = self.columns.get(col_idx) else {
+            self.sort = None;
+            return;
+        };
+        let col_name = col.name.clone();
         self.rows.sort_by_cached_key(|r| {
             let props: Value = serde_json::from_str(&r.properties).unwrap_or_default();
             cell_text(&props[&col_name]).to_lowercase()
@@ -122,7 +167,17 @@ impl TableView {
         if !asc {
             self.rows.reverse();
         }
-        self.cursor = 0;
+    }
+
+    /// Position of the row with the given id in the current display order
+    /// (post-sort), if it still exists.
+    pub fn rows_iter_position(&self, id: &str) -> Option<usize> {
+        self.rows.iter().position(|r| r.id == id)
+    }
+
+    /// Number of rows currently displayed.
+    pub fn row_count(&self) -> usize {
+        self.rows.len()
     }
 
     pub fn move_cursor(&mut self, delta: isize) {
@@ -170,9 +225,19 @@ pub fn render(f: &mut Frame, area: Rect, view: &mut TableView, focused: bool, th
         .columns
         .iter()
         .enumerate()
-        .map(|(i, _)| if i == 0 { Constraint::Min(20) } else { Constraint::Length(14) })
+        .map(|(i, _)| {
+            if i == 0 {
+                Constraint::Min(20)
+            } else {
+                Constraint::Length(14)
+            }
+        })
         .collect();
-    let highlight = if focused { theme.highlight } else { Style::default() };
+    let highlight = if focused {
+        theme.highlight
+    } else {
+        Style::default()
+    };
     view.table_state.select(Some(view.cursor));
     f.render_stateful_widget(
         Table::new(rows, widths)
@@ -241,8 +306,14 @@ mod tests {
             "Name": {"type": "title"}
         })
         .to_string();
-        assert_eq!(schema_options(&schema_json, "Status", "status"), vec!["Todo", "Doing", "Done"]);
-        assert_eq!(schema_options(&schema_json, "Name", "title"), Vec::<String>::new());
+        assert_eq!(
+            schema_options(&schema_json, "Status", "status"),
+            vec!["Todo", "Doing", "Done"]
+        );
+        assert_eq!(
+            schema_options(&schema_json, "Name", "title"),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -258,7 +329,10 @@ mod tests {
     fn sort_toggles_direction() {
         let mut v = TableView::new(
             ds(),
-            vec![row("r1", "b task", false, "Low"), row("r2", "a task", false, "High")],
+            vec![
+                row("r1", "b task", false, "Low"),
+                row("r2", "a task", false, "High"),
+            ],
         );
         v.toggle_sort(0);
         assert_eq!(v.selected_row_id().as_deref(), Some("r2")); // "a task" first
@@ -273,7 +347,10 @@ mod tests {
             cell_text(&json!({"type": "multi_select", "multi_select": [{"name": "a"}, {"name": "b"}]})),
             "a, b"
         );
-        assert_eq!(cell_text(&json!({"type": "date", "date": {"start": "2026-07-05"}})), "2026-07-05");
+        assert_eq!(
+            cell_text(&json!({"type": "date", "date": {"start": "2026-07-05"}})),
+            "2026-07-05"
+        );
         assert_eq!(cell_text(&json!({"type": "checkbox", "checkbox": false})), "☐");
     }
 }

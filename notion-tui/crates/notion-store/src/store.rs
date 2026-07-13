@@ -2,6 +2,7 @@ use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::path::Path;
 
+#[derive(Debug)]
 pub struct Store {
     conn: Connection,
 }
@@ -13,6 +14,27 @@ impl Store {
         }
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
+
+        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        if version < crate::schema::LATEST_VERSION {
+            // Only back up if this DB already has our schema objects (i.e. it was
+            // created by a previous build). A brand-new file also has
+            // `user_version == 0`, but no `pages` table yet — don't back that up.
+            let has_pages_table: i64 = conn.query_row(
+                "SELECT count(*) FROM sqlite_master WHERE name = 'pages'",
+                [],
+                |r| r.get(0),
+            )?;
+            if has_pages_table > 0 {
+                // WAL mode means recently-committed data can live only in the `-wal` file, not
+                // yet in the main `.db` file. Force those frames back into the main file before
+                // copying it, or the backup can be a stale/torn snapshot missing committed rows.
+                conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
+                let backup = path.with_extension(format!("db.bak-v{version}"));
+                std::fs::copy(path, &backup)?;
+            }
+        }
+
         crate::schema::migrate(&conn)?;
         Ok(Store { conn })
     }
@@ -80,7 +102,13 @@ impl Store {
              VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(id) DO UPDATE SET database_id=?2, title=?3, schema_json=?4,
                                            last_edited_time=?5",
-            rusqlite::params![ds.id, ds.database_id, ds.title, ds.schema_json, ds.last_edited_time],
+            rusqlite::params![
+                ds.id,
+                ds.database_id,
+                ds.title,
+                ds.schema_json,
+                ds.last_edited_time
+            ],
         )?;
         Ok(())
     }
@@ -209,10 +237,7 @@ impl Store {
         })
     }
 
-    pub fn get_data_source_by_database_id(
-        &self,
-        database_id: &str,
-    ) -> anyhow::Result<Option<DataSourceRec>> {
+    pub fn get_data_source_by_database_id(&self, database_id: &str) -> anyhow::Result<Option<DataSourceRec>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, database_id, title, schema_json, last_edited_time
              FROM data_sources WHERE database_id = ?1",
@@ -335,12 +360,15 @@ impl Store {
     }
 
     pub fn delete_op(&self, seq: i64) -> anyhow::Result<()> {
-        self.conn.execute("DELETE FROM pending_ops WHERE seq = ?1", [seq])?;
+        self.conn
+            .execute("DELETE FROM pending_ops WHERE seq = ?1", [seq])?;
         Ok(())
     }
 
     pub fn pending_count(&self) -> anyhow::Result<u32> {
-        Ok(self.conn.query_row("SELECT count(*) FROM pending_ops", [], |r| r.get(0))?)
+        Ok(self
+            .conn
+            .query_row("SELECT count(*) FROM pending_ops", [], |r| r.get(0))?)
     }
 
     pub fn has_ops_for(&self, target_id: &str) -> anyhow::Result<bool> {
@@ -353,14 +381,15 @@ impl Store {
     }
 
     pub fn is_page_dirty(&self, page_id: &str) -> anyhow::Result<bool> {
-        let dirty: i64 =
-            self.conn
-                .query_row("SELECT dirty FROM pages WHERE id = ?1", [page_id], |r| r.get(0))?;
+        let dirty: i64 = self
+            .conn
+            .query_row("SELECT dirty FROM pages WHERE id = ?1", [page_id], |r| r.get(0))?;
         Ok(dirty != 0)
     }
 
     pub fn clear_page_dirty(&self, page_id: &str) -> anyhow::Result<()> {
-        self.conn.execute("UPDATE pages SET dirty = 0 WHERE id = ?1", [page_id])?;
+        self.conn
+            .execute("UPDATE pages SET dirty = 0 WHERE id = ?1", [page_id])?;
         Ok(())
     }
 
@@ -390,7 +419,9 @@ impl Store {
 
         Ok(EditReceipt {
             op_seq,
-            inverse: Inverse::ToggleTodo { block_id: block_id.to_string() },
+            inverse: Inverse::ToggleTodo {
+                block_id: block_id.to_string(),
+            },
         })
     }
 
@@ -489,7 +520,9 @@ impl Store {
 
         let receipt = EditReceipt {
             op_seq,
-            inverse: Inverse::DeleteInsertedBlock { block_id: block_id.clone() },
+            inverse: Inverse::DeleteInsertedBlock {
+                block_id: block_id.clone(),
+            },
         };
         Ok((block_id, receipt))
     }
@@ -567,7 +600,10 @@ impl Store {
         // If this block hasn't been pushed yet (its creation is still queued), just
         // repoint that pending creation at the new spot instead of enqueuing a
         // separate reorder op — there's nothing remote to reorder yet.
-        let pending_append = self.ops()?.into_iter().find(|o| o.op_type == "append_block" && o.target_id == block_id);
+        let pending_append = self
+            .ops()?
+            .into_iter()
+            .find(|o| o.op_type == "append_block" && o.target_id == block_id);
         if let Some(op) = pending_append {
             let mut payload: Value = serde_json::from_str(&op.payload).unwrap_or_default();
             payload["parent_id"] = json!(new_parent);
@@ -579,26 +615,44 @@ impl Store {
             return Ok(());
         }
 
-        self.conn.execute("UPDATE pages SET dirty = 1 WHERE id = ?1", [&page_id])?;
-        self.enqueue_op("reorder_block", block_id, &json!({"page_id": page_id}).to_string(), None)?;
+        self.conn
+            .execute("UPDATE pages SET dirty = 1 WHERE id = ?1", [&page_id])?;
+        self.enqueue_op(
+            "reorder_block",
+            block_id,
+            &json!({"page_id": page_id}).to_string(),
+            None,
+        )?;
         Ok(())
     }
 
     pub fn replace_comments(&self, parent_id: &str, recs: &[CommentRec]) -> anyhow::Result<()> {
         // Keep locally-created (still-pending, tmp-id) comments; replace the synced rest.
-        self.conn.execute(
+        // The DELETE + INSERTs run in one transaction so a mid-batch failure (e.g. a
+        // duplicate id within `recs`) rolls back and leaves the prior rows intact.
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
             "DELETE FROM comments WHERE parent_id = ?1 AND id NOT LIKE 'tmp-%'",
             [parent_id],
         )?;
-        let mut stmt = self.conn.prepare(
-            "INSERT OR REPLACE INTO comments (id, parent_id, parent_kind, thread_id, author, body, created_time)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        )?;
-        for c in recs {
-            stmt.execute(rusqlite::params![
-                c.id, c.parent_id, c.parent_kind, c.thread_id, c.author, c.body, c.created_time
-            ])?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO comments (id, parent_id, parent_kind, thread_id, author, body, created_time)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )?;
+            for c in recs {
+                stmt.execute(rusqlite::params![
+                    c.id,
+                    c.parent_id,
+                    c.parent_kind,
+                    c.thread_id,
+                    c.author,
+                    c.body,
+                    c.created_time
+                ])?;
+            }
         }
+        tx.commit()?;
         Ok(())
     }
 
@@ -610,8 +664,12 @@ impl Store {
         let out = stmt
             .query_map([parent_id], |r| {
                 Ok(CommentRec {
-                    id: r.get(0)?, parent_id: r.get(1)?, parent_kind: r.get(2)?,
-                    thread_id: r.get(3)?, author: r.get(4)?, body: r.get(5)?,
+                    id: r.get(0)?,
+                    parent_id: r.get(1)?,
+                    parent_kind: r.get(2)?,
+                    thread_id: r.get(3)?,
+                    author: r.get(4)?,
+                    body: r.get(5)?,
                     created_time: r.get(6)?,
                 })
             })?
@@ -630,7 +688,10 @@ impl Store {
     ) -> anyhow::Result<String> {
         let id = format!(
             "tmp-{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         );
         self.conn.execute(
             "INSERT INTO comments (id, parent_id, parent_kind, thread_id, author, body, created_time)
@@ -650,7 +711,10 @@ impl Store {
 
     pub fn rewrite_comment_id(&mut self, old_id: &str, new_id: &str) -> anyhow::Result<()> {
         let tx = self.conn.transaction()?;
-        tx.execute("UPDATE comments SET id = ?2 WHERE id = ?1", rusqlite::params![old_id, new_id])?;
+        tx.execute(
+            "UPDATE comments SET id = ?2 WHERE id = ?1",
+            rusqlite::params![old_id, new_id],
+        )?;
         tx.execute(
             "UPDATE pending_ops SET target_id = ?2 WHERE target_id = ?1",
             rusqlite::params![old_id, new_id],
@@ -697,9 +761,14 @@ impl Store {
                 }
                 let ds: Option<String> = self
                     .conn
-                    .query_row("SELECT data_source_id FROM rows WHERE id = ?1", [&row_id], |r| r.get(0))
+                    .query_row("SELECT data_source_id FROM rows WHERE id = ?1", [&row_id], |r| {
+                        r.get(0)
+                    })
                     .ok();
-                Ok(ds.map(|data_source_id| ResolvedTarget::Row { row_id, data_source_id }))
+                Ok(ds.map(|data_source_id| ResolvedTarget::Row {
+                    row_id,
+                    data_source_id,
+                }))
             }
             _ => Ok(None),
         }
@@ -714,7 +783,9 @@ impl Store {
     ) -> anyhow::Result<()> {
         let page_id: String =
             self.conn
-                .query_row("SELECT page_id FROM blocks WHERE id = ?1", [block_id], |r| r.get(0))?;
+                .query_row("SELECT page_id FROM blocks WHERE id = ?1", [block_id], |r| {
+                    r.get(0)
+                })?;
         self.delete_op(seq)?;
         // Advance our record of the remote timestamp so the fresh edit's base
         // matches what the server currently has (bypasses the dirty guard on purpose).
@@ -741,7 +812,9 @@ impl Store {
             Inverse::ToggleTodo { block_id } => {
                 let payload_str: String =
                     self.conn
-                        .query_row("SELECT payload FROM blocks WHERE id = ?1", [block_id], |r| r.get(0))?;
+                        .query_row("SELECT payload FROM blocks WHERE id = ?1", [block_id], |r| {
+                            r.get(0)
+                        })?;
                 let mut payload: Value = serde_json::from_str(&payload_str).unwrap_or_else(|_| json!({}));
                 let checked = payload["checked"].as_bool().unwrap_or(false);
                 payload["checked"] = json!(!checked);
@@ -750,14 +823,19 @@ impl Store {
                     rusqlite::params![block_id, payload.to_string()],
                 )?;
             }
-            Inverse::UpdateBlockText { block_id, old_payload, old_plain_text } => {
+            Inverse::UpdateBlockText {
+                block_id,
+                old_payload,
+                old_plain_text,
+            } => {
                 self.conn.execute(
                     "UPDATE blocks SET payload = ?2, plain_text = ?3 WHERE id = ?1",
                     rusqlite::params![block_id, old_payload, old_plain_text],
                 )?;
             }
             Inverse::DeleteInsertedBlock { block_id } => {
-                self.conn.execute("DELETE FROM blocks WHERE id = ?1", [block_id])?;
+                self.conn
+                    .execute("DELETE FROM blocks WHERE id = ?1", [block_id])?;
             }
             Inverse::RecreateBlock {
                 page_id,
@@ -788,28 +866,34 @@ impl Store {
             Inverse::DeleteInsertedRow { row_id } => {
                 self.conn.execute("DELETE FROM rows WHERE id = ?1", [row_id])?;
             }
-            Inverse::UpdateRowProperties { row_id, old_properties, .. } => {
+            Inverse::UpdateRowProperties {
+                row_id,
+                old_properties,
+                ..
+            } => {
                 self.conn.execute(
                     "UPDATE rows SET properties = ?2 WHERE id = ?1",
                     rusqlite::params![row_id, old_properties],
                 )?;
             }
             Inverse::RestoreRow { row_id } => {
-                self.conn.execute("UPDATE rows SET archived = 0 WHERE id = ?1", [row_id])?;
+                self.conn
+                    .execute("UPDATE rows SET archived = 0 WHERE id = ?1", [row_id])?;
             }
         }
         Ok(())
     }
 
     pub fn is_row_dirty(&self, row_id: &str) -> anyhow::Result<bool> {
-        let dirty: i64 =
-            self.conn
-                .query_row("SELECT dirty FROM rows WHERE id = ?1", [row_id], |r| r.get(0))?;
+        let dirty: i64 = self
+            .conn
+            .query_row("SELECT dirty FROM rows WHERE id = ?1", [row_id], |r| r.get(0))?;
         Ok(dirty != 0)
     }
 
     pub fn clear_row_dirty(&self, row_id: &str) -> anyhow::Result<()> {
-        self.conn.execute("UPDATE rows SET dirty = 0 WHERE id = ?1", [row_id])?;
+        self.conn
+            .execute("UPDATE rows SET dirty = 0 WHERE id = ?1", [row_id])?;
         Ok(())
     }
 
@@ -838,7 +922,9 @@ impl Store {
 
         let receipt = EditReceipt {
             op_seq,
-            inverse: Inverse::DeleteInsertedRow { row_id: row_id.clone() },
+            inverse: Inverse::DeleteInsertedRow {
+                row_id: row_id.clone(),
+            },
         };
         Ok((row_id, receipt))
     }
@@ -876,9 +962,11 @@ impl Store {
     }
 
     pub fn edit_delete_row(&mut self, row_id: &str) -> anyhow::Result<EditReceipt> {
-        let base: String = self
-            .conn
-            .query_row("SELECT last_edited_time FROM rows WHERE id = ?1", [row_id], |r| r.get(0))?;
+        let base: String =
+            self.conn
+                .query_row("SELECT last_edited_time FROM rows WHERE id = ?1", [row_id], |r| {
+                    r.get(0)
+                })?;
 
         self.conn
             .execute("UPDATE rows SET archived = 1, dirty = 1 WHERE id = ?1", [row_id])?;
@@ -887,13 +975,18 @@ impl Store {
 
         Ok(EditReceipt {
             op_seq,
-            inverse: Inverse::RestoreRow { row_id: row_id.to_string() },
+            inverse: Inverse::RestoreRow {
+                row_id: row_id.to_string(),
+            },
         })
     }
 
     pub fn rewrite_row_id(&mut self, old_id: &str, new_id: &str) -> anyhow::Result<()> {
         let tx = self.conn.transaction()?;
-        tx.execute("UPDATE rows SET id = ?2 WHERE id = ?1", rusqlite::params![old_id, new_id])?;
+        tx.execute(
+            "UPDATE rows SET id = ?2 WHERE id = ?1",
+            rusqlite::params![old_id, new_id],
+        )?;
         tx.execute(
             "UPDATE pending_ops SET target_id = ?2 WHERE target_id = ?1",
             rusqlite::params![old_id, new_id],
@@ -904,7 +997,10 @@ impl Store {
 
     pub fn rewrite_block_id(&mut self, old_id: &str, new_id: &str) -> anyhow::Result<()> {
         let tx = self.conn.transaction()?;
-        tx.execute("UPDATE blocks SET id = ?2 WHERE id = ?1", rusqlite::params![old_id, new_id])?;
+        tx.execute(
+            "UPDATE blocks SET id = ?2 WHERE id = ?1",
+            rusqlite::params![old_id, new_id],
+        )?;
         tx.execute(
             "UPDATE blocks SET parent_block_id = ?2 WHERE parent_block_id = ?1",
             rusqlite::params![old_id, new_id],
@@ -922,24 +1018,38 @@ impl Store {
             Inverse::ToggleTodo { block_id } => {
                 self.edit_toggle_todo(block_id)?;
             }
-            Inverse::UpdateBlockText { block_id, old_plain_text, .. } => {
+            Inverse::UpdateBlockText {
+                block_id,
+                old_plain_text,
+                ..
+            } => {
                 self.edit_update_block_text(block_id, old_plain_text)?;
             }
             Inverse::DeleteInsertedBlock { block_id } => {
                 self.edit_delete_block(block_id)?;
             }
-            Inverse::RecreateBlock { page_id, block_type, plain_text, .. } => {
+            Inverse::RecreateBlock {
+                page_id,
+                block_type,
+                plain_text,
+                ..
+            } => {
                 self.edit_insert_block_after(page_id, None, block_type, plain_text)?;
             }
             Inverse::DeleteInsertedRow { row_id } => {
                 self.edit_delete_row(row_id)?;
             }
-            Inverse::UpdateRowProperties { row_id, data_source_id: _, old_properties } => {
+            Inverse::UpdateRowProperties {
+                row_id,
+                data_source_id: _,
+                old_properties,
+            } => {
                 let patch: Value = serde_json::from_str(old_properties).unwrap_or_else(|_| json!({}));
                 self.edit_update_row(row_id, patch)?;
             }
             Inverse::RestoreRow { row_id } => {
-                self.conn.execute("UPDATE rows SET archived = 0, dirty = 1 WHERE id = ?1", [row_id])?;
+                self.conn
+                    .execute("UPDATE rows SET archived = 0, dirty = 1 WHERE id = ?1", [row_id])?;
                 let base: String = self.conn.query_row(
                     "SELECT last_edited_time FROM rows WHERE id = ?1",
                     [row_id],
@@ -1033,9 +1143,17 @@ pub struct EditReceipt {
 
 #[derive(Debug, Clone)]
 pub enum Inverse {
-    ToggleTodo { block_id: String },
-    UpdateBlockText { block_id: String, old_payload: String, old_plain_text: String },
-    DeleteInsertedBlock { block_id: String },
+    ToggleTodo {
+        block_id: String,
+    },
+    UpdateBlockText {
+        block_id: String,
+        old_payload: String,
+        old_plain_text: String,
+    },
+    DeleteInsertedBlock {
+        block_id: String,
+    },
     RecreateBlock {
         page_id: String,
         block_id: String,
@@ -1046,9 +1164,17 @@ pub enum Inverse {
         plain_text: String,
         has_children: bool,
     },
-    DeleteInsertedRow { row_id: String },
-    UpdateRowProperties { row_id: String, data_source_id: String, old_properties: String },
-    RestoreRow { row_id: String },
+    DeleteInsertedRow {
+        row_id: String,
+    },
+    UpdateRowProperties {
+        row_id: String,
+        data_source_id: String,
+        old_properties: String,
+    },
+    RestoreRow {
+        row_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

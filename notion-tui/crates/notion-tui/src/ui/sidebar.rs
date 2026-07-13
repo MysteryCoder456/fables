@@ -42,8 +42,7 @@ impl SidebarState {
             .map(|n| n.id.as_str())
             .collect();
         let roots = self.nodes.iter().filter(|n| {
-            n.kind == NodeKind::Page
-                && n.parent_id.as_deref().is_none_or(|p| !page_ids.contains(p))
+            n.kind == NodeKind::Page && n.parent_id.as_deref().is_none_or(|p| !page_ids.contains(p))
         });
         for root in roots {
             self.push_subtree(root, 0, &mut out);
@@ -59,9 +58,11 @@ impl SidebarState {
         if self.collapsed.contains(&node.id) {
             return;
         }
-        for child in self.nodes.iter().filter(|n| {
-            n.kind == NodeKind::Page && n.parent_id.as_deref() == Some(node.id.as_str())
-        }) {
+        for child in self
+            .nodes
+            .iter()
+            .filter(|n| n.kind == NodeKind::Page && n.parent_id.as_deref() == Some(node.id.as_str()))
+        {
             self.push_subtree(child, depth + 1, out);
         }
     }
@@ -102,17 +103,19 @@ pub fn render(f: &mut Frame, area: Rect, state: &mut SidebarState, focused: bool
         })
         .collect();
     let title = if focused { " notion ● " } else { " notion " };
-    let highlight = if focused { theme.highlight } else { ratatui::style::Style::default() };
+    let highlight = if focused {
+        theme.highlight
+    } else {
+        ratatui::style::Style::default()
+    };
     state.list_state.select(Some(state.cursor));
     f.render_stateful_widget(
-        List::new(items)
-            .highlight_style(highlight)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(theme.border)
-                    .title(Span::styled(title, theme.title)),
-            ),
+        List::new(items).highlight_style(highlight).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(theme.border)
+                .title(Span::styled(title, theme.title)),
+        ),
         area,
         &mut state.list_state,
     );
@@ -124,14 +127,24 @@ mod tests {
 
     fn nodes() -> Vec<TreeNode> {
         vec![
-            TreeNode { id: "a".into(), title: "Alpha".into(), parent_id: None, kind: NodeKind::Page },
+            TreeNode {
+                id: "a".into(),
+                title: "Alpha".into(),
+                parent_id: None,
+                kind: NodeKind::Page,
+            },
             TreeNode {
                 id: "a1".into(),
                 title: "Alpha child".into(),
                 parent_id: Some("a".into()),
                 kind: NodeKind::Page,
             },
-            TreeNode { id: "b".into(), title: "Beta".into(), parent_id: None, kind: NodeKind::Page },
+            TreeNode {
+                id: "b".into(),
+                title: "Beta".into(),
+                parent_id: None,
+                kind: NodeKind::Page,
+            },
             TreeNode {
                 id: "ds".into(),
                 title: "Tasks".into(),
@@ -192,8 +205,20 @@ mod tests {
         let backend = TestBackend::new(20, 10);
         let mut term = Terminal::new(backend).unwrap();
         term.draw(|f| render(f, f.area(), &mut s, true, &theme)).unwrap();
-        let content: String = term.backend().buffer().content.iter().map(|c| c.symbol()).collect();
-        assert!(content.contains("Page 29"), "cursor's row should be visible:\n{content}");
-        assert!(!content.contains("Page 0"), "top row should have scrolled out:\n{content}");
+        let content: String = term
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(
+            content.contains("Page 29"),
+            "cursor's row should be visible:\n{content}"
+        );
+        assert!(
+            !content.contains("Page 0"),
+            "top row should have scrolled out:\n{content}"
+        );
     }
 }

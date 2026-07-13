@@ -9,8 +9,16 @@ pub struct Unit {
 }
 
 const EXPRESSIBLE: &[&str] = &[
-    "paragraph", "heading_1", "heading_2", "heading_3", "to_do",
-    "bulleted_list_item", "numbered_list_item", "quote", "divider", "code",
+    "paragraph",
+    "heading_1",
+    "heading_2",
+    "heading_3",
+    "to_do",
+    "bulleted_list_item",
+    "numbered_list_item",
+    "quote",
+    "divider",
+    "code",
 ];
 
 fn is_expressible(block_type: &str) -> bool {
@@ -24,7 +32,11 @@ fn render_line(b: &BlockRec) -> String {
         "heading_2" => format!("## {}", b.plain_text),
         "heading_3" => format!("### {}", b.plain_text),
         "to_do" => {
-            let mark = if payload["checked"].as_bool().unwrap_or(false) { "x" } else { " " };
+            let mark = if payload["checked"].as_bool().unwrap_or(false) {
+                "x"
+            } else {
+                " "
+            };
             format!("- [{mark}] {}", b.plain_text)
         }
         "bulleted_list_item" => format!("- {}", b.plain_text),
@@ -85,11 +97,24 @@ mod tests {
     use super::*;
     use notion_store::BlockRec;
 
-    fn rec(id: &str, parent: Option<&str>, ord: i64, ty: &str, text: &str, payload: &str, has_children: bool) -> BlockRec {
+    fn rec(
+        id: &str,
+        parent: Option<&str>,
+        ord: i64,
+        ty: &str,
+        text: &str,
+        payload: &str,
+        has_children: bool,
+    ) -> BlockRec {
         BlockRec {
-            id: id.into(), page_id: "p".into(), parent_block_id: parent.map(Into::into),
-            ordinal: ord, block_type: ty.into(), payload: payload.into(),
-            plain_text: text.into(), has_children,
+            id: id.into(),
+            page_id: "p".into(),
+            parent_block_id: parent.map(Into::into),
+            ordinal: ord,
+            block_type: ty.into(),
+            payload: payload.into(),
+            plain_text: text.into(),
+            has_children,
         }
     }
 
@@ -130,7 +155,15 @@ mod tests {
 
     #[test]
     fn code_block_is_fenced_with_language() {
-        let blocks = vec![rec("b1", None, 0, "code", "let x = 1;", r#"{"language": "rust"}"#, false)];
+        let blocks = vec![rec(
+            "b1",
+            None,
+            0,
+            "code",
+            "let x = 1;",
+            r#"{"language": "rust"}"#,
+            false,
+        )];
         let (md, _) = blocks_to_markdown(&blocks);
         assert_eq!(md, "```rust\nlet x = 1;\n```");
     }

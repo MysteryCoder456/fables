@@ -48,18 +48,19 @@ impl CommentsState {
 }
 
 pub fn render(f: &mut Frame, area: Rect, state: &mut CommentsState, theme: &Theme) {
-    let items: Vec<ListItem> =
-        state.items.iter().map(|c| ListItem::new(format!("{}: {}", c.author, c.body))).collect();
+    let items: Vec<ListItem> = state
+        .items
+        .iter()
+        .map(|c| ListItem::new(format!("{}: {}", c.author, c.body)))
+        .collect();
     state.list_state.select(Some(state.cursor));
     f.render_stateful_widget(
-        List::new(items)
-            .highlight_style(theme.highlight)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(theme.border)
-                    .title(Span::styled(" comments (n new · r reply) ", theme.title)),
-            ),
+        List::new(items).highlight_style(theme.highlight).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(theme.border)
+                .title(Span::styled(" comments (n new · r reply) ", theme.title)),
+        ),
         area,
         &mut state.list_state,
     );

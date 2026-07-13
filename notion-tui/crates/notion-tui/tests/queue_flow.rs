@@ -7,20 +7,40 @@ use notion_tui::app::{dispatch_key, App, Focus, View};
 fn store_with_conflicted_op() -> (notion_sync::SharedStore, i64) {
     let mut s = Store::open_in_memory().unwrap();
     s.upsert_page(&PageRec {
-        id: "p1".into(), parent_type: "workspace".into(), parent_id: None,
-        title: "P".into(), icon: None, archived: false, last_edited_time: "t1".into(),
-    }).unwrap();
-    s.replace_page_blocks("p1", &[BlockRec {
-        id: "b1".into(), page_id: "p1".into(), parent_block_id: None, ordinal: 0,
-        block_type: "paragraph".into(), payload: "{}".into(), plain_text: "x".into(), has_children: false,
-    }]).unwrap();
+        id: "p1".into(),
+        parent_type: "workspace".into(),
+        parent_id: None,
+        title: "P".into(),
+        icon: None,
+        archived: false,
+        last_edited_time: "t1".into(),
+    })
+    .unwrap();
+    s.replace_page_blocks(
+        "p1",
+        &[BlockRec {
+            id: "b1".into(),
+            page_id: "p1".into(),
+            parent_block_id: None,
+            ordinal: 0,
+            block_type: "paragraph".into(),
+            payload: "{}".into(),
+            plain_text: "x".into(),
+            has_children: false,
+        }],
+    )
+    .unwrap();
     let receipt = s.edit_update_block_text("b1", "local edit").unwrap();
     s.set_op_state(receipt.op_seq, "conflicted", None).unwrap();
     (Arc::new(Mutex::new(s)), receipt.op_seq)
 }
 
-fn shift_q() -> KeyEvent { KeyEvent::new(KeyCode::Char('Q'), KeyModifiers::SHIFT) }
-fn key(c: char) -> KeyEvent { KeyEvent::from(KeyCode::Char(c)) }
+fn shift_q() -> KeyEvent {
+    KeyEvent::new(KeyCode::Char('Q'), KeyModifiers::SHIFT)
+}
+fn key(c: char) -> KeyEvent {
+    KeyEvent::from(KeyCode::Char(c))
+}
 
 #[test]
 fn q_opens_queue_listing_ops_and_q_returns_to_previous_view() {

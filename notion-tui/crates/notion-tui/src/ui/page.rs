@@ -17,8 +17,9 @@ static SYNTAXES: Lazy<SyntaxSet> = Lazy::new(SyntaxSet::load_defaults_newlines);
 static THEMES: Lazy<ThemeSet> = Lazy::new(ThemeSet::load_defaults);
 
 fn highlight_code_line(line: &str, language: &str) -> Line<'static> {
-    let syntax =
-        SYNTAXES.find_syntax_by_token(language).unwrap_or_else(|| SYNTAXES.find_syntax_plain_text());
+    let syntax = SYNTAXES
+        .find_syntax_by_token(language)
+        .unwrap_or_else(|| SYNTAXES.find_syntax_plain_text());
     let theme = &THEMES.themes["base16-ocean.dark"];
     let mut h = HighlightLines::new(syntax, theme);
     let spans: Vec<Span<'static>> = h
@@ -92,7 +93,11 @@ impl PageView {
                 "heading_2" => (format!("## {}", b.plain_text), None),
                 "heading_3" => (format!("### {}", b.plain_text), None),
                 "to_do" => {
-                    let mark = if payload["checked"].as_bool().unwrap_or(false) { "x" } else { " " };
+                    let mark = if payload["checked"].as_bool().unwrap_or(false) {
+                        "x"
+                    } else {
+                        " "
+                    };
                     (format!("[{mark}] {}", b.plain_text), None)
                 }
                 "bulleted_list_item" => (format!("• {}", b.plain_text), None),
@@ -121,7 +126,13 @@ impl PageView {
                 }
                 _ => (format!("⍰ {}", b.plain_text), None),
             };
-            out.push(BlockLine { block_id: b.id.clone(), text, indent, link_page_id: link, spans: None });
+            out.push(BlockLine {
+                block_id: b.id.clone(),
+                text,
+                indent,
+                link_page_id: link,
+                spans: None,
+            });
             if !(b.block_type == "toggle" && collapsed) {
                 self.push_children(Some(&b.id), indent + 1, out);
             }
@@ -188,17 +199,19 @@ pub fn render(f: &mut Frame, area: Rect, view: &mut PageView, focused: bool, the
         })
         .collect();
     let title = format!(" {} ", view.page.title);
-    let highlight = if focused { theme.highlight } else { ratatui::style::Style::default() };
+    let highlight = if focused {
+        theme.highlight
+    } else {
+        ratatui::style::Style::default()
+    };
     view.list_state.select(Some(view.cursor));
     f.render_stateful_widget(
-        List::new(items)
-            .highlight_style(highlight)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(theme.border)
-                    .title(Span::styled(title, theme.title)),
-            ),
+        List::new(items).highlight_style(highlight).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(theme.border)
+                .title(Span::styled(title, theme.title)),
+        ),
         area,
         &mut view.list_state,
     );
@@ -283,7 +296,16 @@ mod tests {
         use ratatui::Terminal;
 
         let blocks: Vec<BlockRec> = (0..30)
-            .map(|i| rec(&format!("b{i}"), None, i as i64, "paragraph", &format!("Line {i}"), "{}"))
+            .map(|i| {
+                rec(
+                    &format!("b{i}"),
+                    None,
+                    i as i64,
+                    "paragraph",
+                    &format!("Line {i}"),
+                    "{}",
+                )
+            })
             .collect();
         let mut v = PageView::new(page(), blocks);
         v.cursor = 29;
@@ -291,16 +313,35 @@ mod tests {
         let backend = TestBackend::new(20, 10);
         let mut term = Terminal::new(backend).unwrap();
         term.draw(|f| render(f, f.area(), &mut v, true, &theme)).unwrap();
-        let content: String = term.backend().buffer().content.iter().map(|c| c.symbol()).collect();
-        assert!(content.contains("Line 29"), "cursor's row should be visible:\n{content}");
-        assert!(!content.contains("Line 0"), "top row should have scrolled out:\n{content}");
+        let content: String = term
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(
+            content.contains("Line 29"),
+            "cursor's row should be visible:\n{content}"
+        );
+        assert!(
+            !content.contains("Line 0"),
+            "top row should have scrolled out:\n{content}"
+        );
     }
 
     #[test]
     fn code_block_renders_per_line_with_syntax_styling() {
         let v = PageView::new(
             page(),
-            vec![rec("c", None, 0, "code", "let x = 1;\nlet y = 2;", r#"{"language": "rust"}"#)],
+            vec![rec(
+                "c",
+                None,
+                0,
+                "code",
+                "let x = 1;\nlet y = 2;",
+                r#"{"language": "rust"}"#,
+            )],
         );
         let lines = v.lines();
         assert_eq!(lines.len(), 2);

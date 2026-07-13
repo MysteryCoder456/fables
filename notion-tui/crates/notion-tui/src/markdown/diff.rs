@@ -44,7 +44,10 @@ pub fn apply_edited_markdown(
     let mut result = Applied::default();
 
     // Pass 0: protected islands are matched by the explicit id in their marker.
-    let still_present: HashSet<&str> = new_lines.iter().filter_map(|l| l.protected_id.as_deref()).collect();
+    let still_present: HashSet<&str> = new_lines
+        .iter()
+        .filter_map(|l| l.protected_id.as_deref())
+        .collect();
     for u in before.iter().filter(|u| u.protected) {
         if !still_present.contains(u.id.as_str()) && !delete_protected.contains(&u.id) {
             result.protected_missing.push(u.id.clone());
@@ -65,9 +68,16 @@ pub fn apply_edited_markdown(
     // reversal (LCS can't keep both matches when order is swapped), which would
     // otherwise turn an unchanged, merely-moved block into a spurious delete+insert.
     let editable_before: Vec<&Unit> = before.iter().filter(|u| !u.protected).collect();
-    let new_idx_of_editable: Vec<usize> = new_lines.iter().enumerate()
-        .filter(|(_, l)| l.protected_id.is_none()).map(|(i, _)| i).collect();
-    let new_texts: Vec<String> = new_idx_of_editable.iter().map(|&i| render_parsed_text(&new_lines[i])).collect();
+    let new_idx_of_editable: Vec<usize> = new_lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.protected_id.is_none())
+        .map(|(i, _)| i)
+        .collect();
+    let new_texts: Vec<String> = new_idx_of_editable
+        .iter()
+        .map(|&i| render_parsed_text(&new_lines[i]))
+        .collect();
 
     let mut available_by_text: HashMap<&str, std::collections::VecDeque<usize>> = HashMap::new();
     for (i, u) in editable_before.iter().enumerate() {
@@ -87,9 +97,16 @@ pub fn apply_edited_markdown(
 
     // Pass 1b: diff whatever's left (genuinely changed content) to pair up
     // insert/delete runs into updates that preserve the original block id.
-    let leftover_old: Vec<usize> = (0..editable_before.len()).filter(|i| !matched_old.contains(i)).collect();
-    let leftover_new: Vec<usize> = (0..new_texts.len()).filter(|i| !matched_new.contains(i)).collect();
-    let leftover_old_texts: Vec<&str> = leftover_old.iter().map(|&i| editable_before[i].text.as_str()).collect();
+    let leftover_old: Vec<usize> = (0..editable_before.len())
+        .filter(|i| !matched_old.contains(i))
+        .collect();
+    let leftover_new: Vec<usize> = (0..new_texts.len())
+        .filter(|i| !matched_new.contains(i))
+        .collect();
+    let leftover_old_texts: Vec<&str> = leftover_old
+        .iter()
+        .map(|&i| editable_before[i].text.as_str())
+        .collect();
     let leftover_new_texts: Vec<&str> = leftover_new.iter().map(|&i| new_texts[i].as_str()).collect();
 
     let diff = TextDiff::from_slices(&leftover_old_texts, &leftover_new_texts);
@@ -209,14 +226,36 @@ mod tests {
     fn store_with_page() -> (Store, Vec<BlockRec>) {
         let mut s = Store::open_in_memory().unwrap();
         s.upsert_page(&PageRec {
-            id: "p1".into(), parent_type: "workspace".into(), parent_id: None,
-            title: "P".into(), icon: None, archived: false, last_edited_time: "t1".into(),
-        }).unwrap();
+            id: "p1".into(),
+            parent_type: "workspace".into(),
+            parent_id: None,
+            title: "P".into(),
+            icon: None,
+            archived: false,
+            last_edited_time: "t1".into(),
+        })
+        .unwrap();
         let blocks = vec![
-            BlockRec { id: "b1".into(), page_id: "p1".into(), parent_block_id: None, ordinal: 0,
-                block_type: "paragraph".into(), payload: "{}".into(), plain_text: "First".into(), has_children: false },
-            BlockRec { id: "b2".into(), page_id: "p1".into(), parent_block_id: None, ordinal: 1,
-                block_type: "paragraph".into(), payload: "{}".into(), plain_text: "Second".into(), has_children: false },
+            BlockRec {
+                id: "b1".into(),
+                page_id: "p1".into(),
+                parent_block_id: None,
+                ordinal: 0,
+                block_type: "paragraph".into(),
+                payload: "{}".into(),
+                plain_text: "First".into(),
+                has_children: false,
+            },
+            BlockRec {
+                id: "b2".into(),
+                page_id: "p1".into(),
+                parent_block_id: None,
+                ordinal: 1,
+                block_type: "paragraph".into(),
+                payload: "{}".into(),
+                plain_text: "Second".into(),
+                has_children: false,
+            },
         ];
         s.replace_page_blocks("p1", &blocks).unwrap();
         (s, blocks)
@@ -228,7 +267,15 @@ mod tests {
         let (_md, units) = blocks_to_markdown(&blocks);
         let edited = "First\nSecond";
         let applied = super::apply_edited_markdown(&mut s, "p1", &units, edited, &HashSet::new()).unwrap();
-        assert_eq!((applied.inserted, applied.updated, applied.deleted, applied.reordered), (0, 0, 0, 0));
+        assert_eq!(
+            (
+                applied.inserted,
+                applied.updated,
+                applied.deleted,
+                applied.reordered
+            ),
+            (0, 0, 0, 0)
+        );
     }
 
     #[test]
@@ -238,7 +285,12 @@ mod tests {
         let edited = "First\nSecond, edited";
         let applied = super::apply_edited_markdown(&mut s, "p1", &units, edited, &HashSet::new()).unwrap();
         assert_eq!(applied.updated, 1);
-        let b2 = s.page_blocks("p1").unwrap().into_iter().find(|b| b.id == "b2").unwrap();
+        let b2 = s
+            .page_blocks("p1")
+            .unwrap()
+            .into_iter()
+            .find(|b| b.id == "b2")
+            .unwrap();
         assert_eq!(b2.plain_text, "Second, edited");
     }
 
@@ -280,11 +332,25 @@ mod tests {
     fn protected_block_missing_from_edited_text_is_reported_but_not_deleted_without_confirmation() {
         let mut s = Store::open_in_memory().unwrap();
         s.upsert_page(&PageRec {
-            id: "p1".into(), parent_type: "workspace".into(), parent_id: None,
-            title: "P".into(), icon: None, archived: false, last_edited_time: "t1".into(),
-        }).unwrap();
-        let blocks = vec![BlockRec { id: "tg1".into(), page_id: "p1".into(), parent_block_id: None,
-            ordinal: 0, block_type: "toggle".into(), payload: "{}".into(), plain_text: "More".into(), has_children: false }];
+            id: "p1".into(),
+            parent_type: "workspace".into(),
+            parent_id: None,
+            title: "P".into(),
+            icon: None,
+            archived: false,
+            last_edited_time: "t1".into(),
+        })
+        .unwrap();
+        let blocks = vec![BlockRec {
+            id: "tg1".into(),
+            page_id: "p1".into(),
+            parent_block_id: None,
+            ordinal: 0,
+            block_type: "toggle".into(),
+            payload: "{}".into(),
+            plain_text: "More".into(),
+            has_children: false,
+        }];
         s.replace_page_blocks("p1", &blocks).unwrap();
         let (_md, units) = blocks_to_markdown(&blocks);
 

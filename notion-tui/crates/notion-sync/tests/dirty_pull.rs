@@ -17,7 +17,8 @@ fn fast_client(uri: String) -> NotionClient {
 #[tokio::test]
 async fn pull_skips_block_fetch_for_dirty_page() {
     let server = MockServer::start().await;
-    Mock::given(method("POST")).and(path("/v1/search"))
+    Mock::given(method("POST"))
+        .and(path("/v1/search"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "results": [{"object": "page", "id": "p1", "archived": false,
                 "last_edited_time": "2026-07-05T10:00:00.000Z",
@@ -25,7 +26,8 @@ async fn pull_skips_block_fetch_for_dirty_page() {
                 "properties": {"Name": {"type": "title",
                                         "title": [{"plain_text": "Remote renamed"}]}}}],
             "has_more": false, "next_cursor": null})))
-        .mount(&server).await;
+        .mount(&server)
+        .await;
     // No mock for GET /v1/blocks/p1/children — if the puller calls it, the test fails loudly.
 
     let store: SharedStore = Arc::new(Mutex::new(Store::open_in_memory().unwrap()));
@@ -55,7 +57,9 @@ async fn pull_skips_block_fetch_for_dirty_page() {
             }],
         )
         .unwrap();
-        s.conn().execute("UPDATE pages SET dirty = 1 WHERE id = 'p1'", []).unwrap();
+        s.conn()
+            .execute("UPDATE pages SET dirty = 1 WHERE id = 'p1'", [])
+            .unwrap();
     }
 
     let updated = pull_once(&fast_client(server.uri()), &store).await.unwrap();

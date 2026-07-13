@@ -16,7 +16,10 @@ const KEYRING_SERVICE: &str = "notion-tui";
 const KEYRING_USER: &str = "integration-token";
 
 pub fn token_from_keyring() -> Option<String> {
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER).ok()?.get_password().ok()
+    keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
+        .ok()?
+        .get_password()
+        .ok()
 }
 
 pub enum TokenSink {
@@ -37,8 +40,9 @@ pub fn store_token(token: &str) -> anyhow::Result<TokenSink> {
             return Ok(TokenSink::Keyring);
         }
     }
-    let path =
-        dirs::config_dir().ok_or_else(|| anyhow::anyhow!("no config dir"))?.join("notion-tui/config.toml");
+    let path = dirs::config_dir()
+        .ok_or_else(|| anyhow::anyhow!("no config dir"))?
+        .join("notion-tui/config.toml");
     write_token_file(&path, token)?;
     Ok(TokenSink::File)
 }
@@ -128,7 +132,11 @@ pub fn from_sources(
             .and_then(|v| v.as_str())
             .map(PathBuf::from)
             .unwrap_or(default_db),
-        theme: file.get("theme").and_then(|v| v.as_str()).unwrap_or("default").to_string(),
+        theme: file
+            .get("theme")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default")
+            .to_string(),
         mouse: file.get("mouse").and_then(|v| v.as_bool()).unwrap_or(true),
         editor: file.get("editor").and_then(|v| v.as_str()).map(str::to_string),
         keys: file
@@ -172,8 +180,13 @@ mod tests {
 
     #[test]
     fn file_token_used_when_no_env() {
-        let cfg =
-            from_sources(None, None, Some("token = \"file-tok\""), PathBuf::from("/tmp/x.db")).unwrap();
+        let cfg = from_sources(
+            None,
+            None,
+            Some("token = \"file-tok\""),
+            PathBuf::from("/tmp/x.db"),
+        )
+        .unwrap();
         assert_eq!(cfg.token, "file-tok");
         assert_eq!(cfg.poll_interval_secs, 30); // default
     }

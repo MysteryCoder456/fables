@@ -6,7 +6,8 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 #[tokio::test]
 async fn fetches_nested_block_tree() {
     let server = MockServer::start().await;
-    Mock::given(method("GET")).and(path("/v1/blocks/page1/children"))
+    Mock::given(method("GET"))
+        .and(path("/v1/blocks/page1/children"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "results": [
                 {"object": "block", "id": "b1", "type": "heading_1", "has_children": false,
@@ -18,8 +19,10 @@ async fn fetches_nested_block_tree() {
             ],
             "has_more": false, "next_cursor": null
         })))
-        .mount(&server).await;
-    Mock::given(method("GET")).and(path("/v1/blocks/b2/children"))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v1/blocks/b2/children"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "results": [
                 {"object": "block", "id": "b21", "type": "paragraph", "has_children": false,
@@ -27,7 +30,8 @@ async fn fetches_nested_block_tree() {
             ],
             "has_more": false, "next_cursor": null
         })))
-        .mount(&server).await;
+        .mount(&server)
+        .await;
 
     let client = NotionClient::with_base_url("t", server.uri());
     let flat = client.fetch_block_tree("page1").await.unwrap();
@@ -51,7 +55,8 @@ async fn fetches_nested_block_tree() {
 #[tokio::test]
 async fn queries_data_source_with_pagination() {
     let server = MockServer::start().await;
-    Mock::given(method("GET")).and(path("/v1/data_sources/ds1"))
+    Mock::given(method("GET"))
+        .and(path("/v1/data_sources/ds1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "object": "data_source", "id": "ds1",
             "parent": {"type": "database_id", "database_id": "db1"},
@@ -60,8 +65,10 @@ async fn queries_data_source_with_pagination() {
             "properties": {"Name": {"id": "title", "type": "title"},
                            "Done": {"id": "d1", "type": "checkbox"}}
         })))
-        .mount(&server).await;
-    Mock::given(method("POST")).and(path("/v1/data_sources/ds1/query"))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/data_sources/ds1/query"))
         .and(body_partial_json(json!({"start_cursor": "c2"})))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "results": [{"object": "page", "id": "r2", "archived": false,
@@ -70,8 +77,10 @@ async fn queries_data_source_with_pagination() {
                          "properties": {}}],
             "has_more": false, "next_cursor": null
         })))
-        .mount(&server).await;
-    Mock::given(method("POST")).and(path("/v1/data_sources/ds1/query"))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/data_sources/ds1/query"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "results": [{"object": "page", "id": "r1", "archived": false,
                          "last_edited_time": "2026-07-02T00:00:00.000Z",
@@ -79,7 +88,8 @@ async fn queries_data_source_with_pagination() {
                          "properties": {}}],
             "has_more": true, "next_cursor": "c2"
         })))
-        .mount(&server).await;
+        .mount(&server)
+        .await;
 
     let client = NotionClient::with_base_url("t", server.uri());
 

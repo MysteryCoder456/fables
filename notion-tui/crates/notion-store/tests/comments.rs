@@ -2,8 +2,12 @@ use notion_store::{CommentRec, Store};
 
 fn rec(id: &str, body: &str) -> CommentRec {
     CommentRec {
-        id: id.into(), parent_id: "p1".into(), parent_kind: "page".into(),
-        thread_id: Some("d1".into()), author: "u1".into(), body: body.into(),
+        id: id.into(),
+        parent_id: "p1".into(),
+        parent_kind: "page".into(),
+        thread_id: Some("d1".into()),
+        author: "u1".into(),
+        body: body.into(),
         created_time: "2026-07-06T10:00:00.000Z".into(),
     }
 }
@@ -11,7 +15,8 @@ fn rec(id: &str, body: &str) -> CommentRec {
 #[test]
 fn replace_and_read_comments() {
     let s = Store::open_in_memory().unwrap();
-    s.replace_comments("p1", &[rec("c1", "first"), rec("c2", "second")]).unwrap();
+    s.replace_comments("p1", &[rec("c1", "first"), rec("c2", "second")])
+        .unwrap();
     let got = s.comments_for("p1").unwrap();
     assert_eq!(got.len(), 2);
     assert_eq!(got[0].body, "first");
@@ -49,4 +54,52 @@ fn rewrite_comment_id_updates_row_and_pending_ops() {
     s.rewrite_comment_id(&tmp_id, "real-c1").unwrap();
     assert_eq!(s.comments_for("p1").unwrap()[0].id, "real-c1");
     assert_eq!(s.ops().unwrap()[0].target_id, "real-c1");
+}
+
+#[test]
+fn replace_comments_is_atomic_on_mid_batch_failure() {
+    let s = Store::open_in_memory().unwrap();
+    s.replace_comments(
+        "p1",
+        &[CommentRec {
+            id: "c1".into(),
+            parent_id: "p1".into(),
+            parent_kind: "page".into(),
+            thread_id: Some("t1".into()),
+            author: "a".into(),
+            body: "original".into(),
+            created_time: "2026-01-01T00:00:00.000Z".into(),
+        }],
+    )
+    .unwrap();
+
+    // A batch with a duplicate id in itself will violate the PK on the second
+    // insert — after the failure, the ORIGINAL comment must still be there.
+    let dup = CommentRec {
+        id: "c2".into(),
+        parent_id: "p1".into(),
+        parent_kind: "page".into(),
+        thread_id: None,
+        author: "a".into(),
+        body: "new".into(),
+        created_time: "2026-01-02T00:00:00.000Z".into(),
+    };
+    let bad_batch = vec![
+        dup.clone(),
+        CommentRec {
+            body: "conflict".into(),
+            ..dup
+        },
+    ];
+    // INSERT OR REPLACE can't fail on a duplicate id — switch the statement to
+    // plain INSERT as part of this task (replace-semantics come from the
+    // preceding DELETE), which makes mid-batch failure representable.
+    assert!(s.replace_comments("p1", &bad_batch).is_err());
+
+    let after = s.comments_for("p1").unwrap();
+    assert_eq!(after.len(), 1);
+    assert_eq!(
+        after[0].body, "original",
+        "failed batch must not destroy prior comments"
+    );
 }

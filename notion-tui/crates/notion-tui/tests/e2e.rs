@@ -14,7 +14,8 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 #[tokio::test]
 async fn crawl_then_browse_smoke() {
     let server = MockServer::start().await;
-    Mock::given(method("POST")).and(path("/v1/search"))
+    Mock::given(method("POST"))
+        .and(path("/v1/search"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "results": [{"object": "page", "id": "p1", "archived": false,
                 "last_edited_time": "2026-07-05T10:00:00.000Z",
@@ -22,18 +23,23 @@ async fn crawl_then_browse_smoke() {
                 "properties": {"Name": {"type": "title",
                                         "title": [{"plain_text": "Hello Page"}]}}}],
             "has_more": false, "next_cursor": null})))
-        .mount(&server).await;
-    Mock::given(method("GET")).and(path("/v1/blocks/p1/children"))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v1/blocks/p1/children"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "results": [{"object": "block", "id": "b1", "type": "paragraph",
                 "has_children": false,
                 "paragraph": {"rich_text": [{"plain_text": "hello world"}]}}],
             "has_more": false, "next_cursor": null})))
-        .mount(&server).await;
-    Mock::given(method("GET")).and(path("/v1/comments"))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v1/comments"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "results": [], "has_more": false, "next_cursor": null})))
-        .mount(&server).await;
+        .mount(&server)
+        .await;
 
     let store = Arc::new(Mutex::new(Store::open_in_memory().unwrap()));
     let mut client = NotionClient::with_base_url("t", server.uri());

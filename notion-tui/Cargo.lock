@@ -1157,6 +1157,7 @@ dependencies = [
 name = "notion-tui-sync"
 version = "0.1.1"
 dependencies = [
+ "futures",
  "notion-tui-api",
  "notion-tui-store",
  "serde_json",

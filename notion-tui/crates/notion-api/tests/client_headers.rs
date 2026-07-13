@@ -33,7 +33,11 @@ async fn api_error_is_parsed() {
     let client = NotionClient::with_base_url("t", server.uri());
     let err = client.get_json("/v1/users/me").await.unwrap_err();
     match err {
-        notion_api::ApiError::Api { status, code, message } => {
+        notion_api::ApiError::Api {
+            status,
+            code,
+            message,
+        } => {
             assert_eq!(status, 404);
             assert_eq!(code, "object_not_found");
             assert_eq!(message, "Not found");

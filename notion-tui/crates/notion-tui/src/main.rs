@@ -36,7 +36,10 @@ async fn main() -> anyhow::Result<()> {
     // rare one-shots, so a second independent pacing budget is fine.
     let remote_client = std::sync::Arc::new(notion_api::NotionClient::new(cfg.token.clone()));
     let (app_tx, mut app_rx) = tokio::sync::mpsc::unbounded_channel();
-    app.remote = Some(app::RemoteHandle { client: remote_client, tx: app_tx });
+    app.remote = Some(app::RemoteHandle {
+        client: remote_client,
+        tx: app_tx,
+    });
 
     while !app.should_quit {
         if std::mem::take(&mut app.force_redraw) {

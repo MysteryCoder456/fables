@@ -72,7 +72,10 @@ fn update_row_merges_properties_and_queues_op() {
     assert_eq!(ops.len(), 1);
     assert_eq!(ops[0].op_type, "update_row");
     assert_eq!(ops[0].target_id, "r1");
-    assert_eq!(ops[0].base_edited_time.as_deref(), Some("2026-01-01T00:00:00.000Z"));
+    assert_eq!(
+        ops[0].base_edited_time.as_deref(),
+        Some("2026-01-01T00:00:00.000Z")
+    );
 }
 
 #[test]
@@ -88,7 +91,10 @@ fn delete_row_archives_and_queues_op() {
     assert_eq!(ops.len(), 1);
     assert_eq!(ops[0].op_type, "delete_row");
     assert_eq!(ops[0].target_id, "r1");
-    assert_eq!(ops[0].base_edited_time.as_deref(), Some("2026-01-01T00:00:00.000Z"));
+    assert_eq!(
+        ops[0].base_edited_time.as_deref(),
+        Some("2026-01-01T00:00:00.000Z")
+    );
 }
 
 #[test]
@@ -97,7 +103,8 @@ fn rewrite_row_id_updates_row_and_pending_ops() {
     let props = json!({"Name": {"type": "title", "title": [{"plain_text": "New task"}]}});
     let (tmp_id, _receipt) = s.edit_create_row("ds1", props).unwrap();
     // A second edit queued against the still-temp id before the create has pushed.
-    s.edit_update_row(&tmp_id, json!({"Done": {"type": "checkbox", "checkbox": true}})).unwrap();
+    s.edit_update_row(&tmp_id, json!({"Done": {"type": "checkbox", "checkbox": true}}))
+        .unwrap();
 
     s.rewrite_row_id(&tmp_id, "real-row-id").unwrap();
 
@@ -107,7 +114,9 @@ fn rewrite_row_id_updates_row_and_pending_ops() {
 
     let ops = s.ops().unwrap();
     assert!(ops.iter().all(|o| o.target_id != tmp_id));
-    assert!(ops.iter().any(|o| o.target_id == "real-row-id" && o.op_type == "update_row"));
+    assert!(ops
+        .iter()
+        .any(|o| o.target_id == "real-row-id" && o.op_type == "update_row"));
 }
 
 #[test]
@@ -137,7 +146,9 @@ fn rewrite_block_id_updates_block_children_and_pending_ops() {
         }],
     )
     .unwrap();
-    let (tmp_id, _) = s.edit_insert_block_after("p1", Some("b1"), "paragraph", "child soon").unwrap();
+    let (tmp_id, _) = s
+        .edit_insert_block_after("p1", Some("b1"), "paragraph", "child soon")
+        .unwrap();
 
     s.rewrite_block_id(&tmp_id, "real-block-id").unwrap();
 

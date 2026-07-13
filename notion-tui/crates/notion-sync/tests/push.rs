@@ -50,16 +50,20 @@ async fn push_toggle_todo_updates_remote_and_clears_dirty() {
     assert!(store.lock().unwrap().is_page_dirty("p1").unwrap());
 
     let server = MockServer::start().await;
-    Mock::given(method("GET")).and(path("/v1/pages/p1"))
+    Mock::given(method("GET"))
+        .and(path("/v1/pages/p1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "object": "page", "id": "p1", "last_edited_time": "2026-07-05T10:00:00.000Z"
         })))
-        .mount(&server).await;
-    Mock::given(method("PATCH")).and(path("/v1/blocks/b1"))
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/v1/blocks/b1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "object": "block", "id": "b1", "last_edited_time": "2026-07-05T11:00:00.000Z"
         })))
-        .mount(&server).await;
+        .mount(&server)
+        .await;
 
     let pushed = push_once(&fast_client(server.uri()), &store).await.unwrap();
     assert_eq!(pushed, 1);
@@ -77,12 +81,14 @@ async fn push_insert_block_rewrites_temp_id() {
         .unwrap();
 
     let server = MockServer::start().await;
-    Mock::given(method("PATCH")).and(path("/v1/blocks/p1/children"))
+    Mock::given(method("PATCH"))
+        .and(path("/v1/blocks/p1/children"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "results": [{"object": "block", "id": "real-b2",
                          "last_edited_time": "2026-07-05T11:00:00.000Z"}]
         })))
-        .mount(&server).await;
+        .mount(&server)
+        .await;
 
     let pushed = push_once(&fast_client(server.uri()), &store).await.unwrap();
     assert_eq!(pushed, 1);
@@ -100,16 +106,20 @@ async fn push_delete_block_removes_remote_and_clears_dirty() {
     store.lock().unwrap().edit_delete_block("b1").unwrap();
 
     let server = MockServer::start().await;
-    Mock::given(method("GET")).and(path("/v1/pages/p1"))
+    Mock::given(method("GET"))
+        .and(path("/v1/pages/p1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "object": "page", "id": "p1", "last_edited_time": "2026-07-05T10:00:00.000Z"
         })))
-        .mount(&server).await;
-    Mock::given(method("DELETE")).and(path("/v1/blocks/b1"))
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/v1/blocks/b1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "object": "block", "id": "b1", "archived": true
         })))
-        .mount(&server).await;
+        .mount(&server)
+        .await;
 
     let pushed = push_once(&fast_client(server.uri()), &store).await.unwrap();
     assert_eq!(pushed, 1);
@@ -144,19 +154,27 @@ fn ds_store_with_row() -> SharedStore {
 #[tokio::test]
 async fn push_update_row_patches_remote_and_clears_dirty() {
     let store = ds_store_with_row();
-    store.lock().unwrap().edit_update_row("r1", json!({"Name": "new"})).unwrap();
+    store
+        .lock()
+        .unwrap()
+        .edit_update_row("r1", json!({"Name": "new"}))
+        .unwrap();
 
     let server = MockServer::start().await;
-    Mock::given(method("GET")).and(path("/v1/pages/r1"))
+    Mock::given(method("GET"))
+        .and(path("/v1/pages/r1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "object": "page", "id": "r1", "last_edited_time": "2026-07-05T10:00:00.000Z"
         })))
-        .mount(&server).await;
-    Mock::given(method("PATCH")).and(path("/v1/pages/r1"))
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/v1/pages/r1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "object": "page", "id": "r1", "last_edited_time": "2026-07-05T11:00:00.000Z"
         })))
-        .mount(&server).await;
+        .mount(&server)
+        .await;
 
     let pushed = push_once(&fast_client(server.uri()), &store).await.unwrap();
     assert_eq!(pushed, 1);
@@ -174,11 +192,13 @@ async fn push_create_row_rewrites_temp_id() {
         .unwrap();
 
     let server = MockServer::start().await;
-    Mock::given(method("POST")).and(path("/v1/pages"))
+    Mock::given(method("POST"))
+        .and(path("/v1/pages"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "object": "page", "id": "real-r2", "last_edited_time": "2026-07-05T11:00:00.000Z"
         })))
-        .mount(&server).await;
+        .mount(&server)
+        .await;
 
     let pushed = push_once(&fast_client(server.uri()), &store).await.unwrap();
     assert_eq!(pushed, 1);
@@ -195,17 +215,21 @@ async fn push_delete_row_archives_remote_and_clears_dirty() {
     store.lock().unwrap().edit_delete_row("r1").unwrap();
 
     let server = MockServer::start().await;
-    Mock::given(method("GET")).and(path("/v1/pages/r1"))
+    Mock::given(method("GET"))
+        .and(path("/v1/pages/r1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "object": "page", "id": "r1", "last_edited_time": "2026-07-05T10:00:00.000Z"
         })))
-        .mount(&server).await;
-    Mock::given(method("PATCH")).and(path("/v1/pages/r1"))
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/v1/pages/r1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "object": "page", "id": "r1", "archived": true,
             "last_edited_time": "2026-07-05T11:00:00.000Z"
         })))
-        .mount(&server).await;
+        .mount(&server)
+        .await;
 
     let pushed = push_once(&fast_client(server.uri()), &store).await.unwrap();
     assert_eq!(pushed, 1);

@@ -17,7 +17,9 @@ fn page(id: &str, title: &str) -> PageRec {
 fn upsert_page_skips_metadata_when_dirty() {
     let s = Store::open_in_memory().unwrap();
     s.upsert_page(&page("p1", "Original title")).unwrap();
-    s.conn().execute("UPDATE pages SET dirty = 1 WHERE id = 'p1'", []).unwrap();
+    s.conn()
+        .execute("UPDATE pages SET dirty = 1 WHERE id = 'p1'", [])
+        .unwrap();
 
     s.upsert_page(&page("p1", "Remote renamed title")).unwrap();
 
@@ -69,7 +71,8 @@ fn replace_rows_preserves_dirty_row_but_updates_others() {
     .unwrap();
 
     // Local edit dirties r1 before the next remote pull lands.
-    s.edit_update_row("r1", json!({"Name": "locally edited r1"})).unwrap();
+    s.edit_update_row("r1", json!({"Name": "locally edited r1"}))
+        .unwrap();
 
     // Simulated remote pull: r1 has different (stale, pre-edit) data, r2 has a genuine update,
     // and a brand-new row r3 shows up.
@@ -102,8 +105,7 @@ fn replace_rows_preserves_dirty_row_but_updates_others() {
     .unwrap();
 
     let rows = s.rows("ds1").unwrap();
-    let by_id: std::collections::HashMap<&str, &RowRec> =
-        rows.iter().map(|r| (r.id.as_str(), r)).collect();
+    let by_id: std::collections::HashMap<&str, &RowRec> = rows.iter().map(|r| (r.id.as_str(), r)).collect();
 
     let r1_props: Value = serde_json::from_str(&by_id["r1"].properties).unwrap();
     assert_eq!(r1_props["Name"], "locally edited r1");

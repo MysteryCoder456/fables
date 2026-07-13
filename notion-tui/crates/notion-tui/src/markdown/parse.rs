@@ -6,10 +6,24 @@ pub struct ParsedLine {
     pub protected_id: Option<String>,
 }
 
+/// A non-fatal problem noticed while parsing; the parse still produces a
+/// best-effort result, but the caller may want the user to confirm it.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ParseWarning {
+    /// A ``` fence opened on `line` (1-based) was never closed, so everything
+    /// after it was swallowed into a single code block.
+    UnclosedFence { line: usize },
+}
+
 pub fn parse_markdown(md: &str) -> Vec<ParsedLine> {
+    parse_markdown_checked(md).0
+}
+
+pub fn parse_markdown_checked(md: &str) -> (Vec<ParsedLine>, Vec<ParseWarning>) {
     let mut out = Vec::new();
-    let mut lines = md.lines().peekable();
-    while let Some(raw) = lines.next() {
+    let mut warnings = Vec::new();
+    let mut lines = md.lines().enumerate();
+    while let Some((idx, raw)) = lines.next() {
         if raw.trim().is_empty() {
             continue;
         }
@@ -18,25 +32,48 @@ pub fn parse_markdown(md: &str) -> Vec<ParsedLine> {
         let trimmed = &raw[indent..];
 
         if let Some(id) = parse_protected_marker(trimmed) {
-            out.push(ParsedLine { depth, block_type: "protected".into(), text: String::new(), checked: None, protected_id: Some(id) });
+            out.push(ParsedLine {
+                depth,
+                block_type: "protected".into(),
+                text: String::new(),
+                checked: None,
+                protected_id: Some(id),
+            });
             continue;
         }
         if let Some(rest) = trimmed.strip_prefix("```") {
             let _lang = rest.trim().to_string();
             let mut body = Vec::new();
-            for l in lines.by_ref() {
+            let mut closed = false;
+            for (_, l) in lines.by_ref() {
                 if l.trim() == "```" {
+                    closed = true;
                     break;
                 }
                 body.push(l);
             }
-            out.push(ParsedLine { depth, block_type: "code".into(), text: body.join("\n"), checked: None, protected_id: None });
+            if !closed {
+                warnings.push(ParseWarning::UnclosedFence { line: idx + 1 });
+            }
+            out.push(ParsedLine {
+                depth,
+                block_type: "code".into(),
+                text: body.join("\n"),
+                checked: None,
+                protected_id: None,
+            });
             continue;
         }
         let (block_type, text, checked) = classify(trimmed);
-        out.push(ParsedLine { depth, block_type, text, checked, protected_id: None });
+        out.push(ParsedLine {
+            depth,
+            block_type,
+            text,
+            checked,
+            protected_id: None,
+        });
     }
-    out
+    (out, warnings)
 }
 
 fn parse_protected_marker(line: &str) -> Option<String> {
@@ -122,5 +159,24 @@ mod tests {
         assert_eq!(lines[0].block_type, "code");
         assert_eq!(lines[0].text, "let x = 1;\nlet y = 2;");
         assert_eq!(lines[1].block_type, "bulleted_list_item");
+    }
+}
+
+#[cfg(test)]
+mod fence_tests {
+    use super::*;
+
+    #[test]
+    fn detects_unclosed_fence_with_line_number() {
+        let md = "hello\n```rust\nlet x = 1;";
+        let (lines, warnings) = parse_markdown_checked(md);
+        assert_eq!(lines.len(), 2); // paragraph + code block
+        assert!(matches!(warnings[..], [ParseWarning::UnclosedFence { line: 2 }]));
+    }
+
+    #[test]
+    fn closed_fence_produces_no_warning() {
+        let (_, warnings) = parse_markdown_checked("```\ncode\n```\nafter");
+        assert!(warnings.is_empty());
     }
 }

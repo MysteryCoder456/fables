@@ -51,11 +51,13 @@ async fn remote_change_since_base_marks_conflicted_and_blocks_same_target() {
     store.lock().unwrap().edit_toggle_todo("b1").unwrap();
 
     let server = MockServer::start().await;
-    Mock::given(method("GET")).and(path("/v1/pages/p1"))
+    Mock::given(method("GET"))
+        .and(path("/v1/pages/p1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "object": "page", "id": "p1", "last_edited_time": "2026-07-05T12:00:00.000Z"
         })))
-        .mount(&server).await;
+        .mount(&server)
+        .await;
     // No PATCH mock: if the pusher tries to push past the conflict check, this test fails loudly.
 
     let pushed = push_once(&fast_client(server.uri()), &store).await.unwrap();
@@ -77,16 +79,20 @@ async fn api_rejection_marks_op_failed_with_reason() {
     store.lock().unwrap().edit_toggle_todo("b1").unwrap();
 
     let server = MockServer::start().await;
-    Mock::given(method("GET")).and(path("/v1/pages/p1"))
+    Mock::given(method("GET"))
+        .and(path("/v1/pages/p1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "object": "page", "id": "p1", "last_edited_time": "2026-07-05T10:00:00.000Z"
         })))
-        .mount(&server).await;
-    Mock::given(method("PATCH")).and(path("/v1/blocks/b1"))
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/v1/blocks/b1"))
         .respond_with(ResponseTemplate::new(400).set_body_json(json!({
             "code": "validation_error", "message": "bad request"
         })))
-        .mount(&server).await;
+        .mount(&server)
+        .await;
 
     let pushed = push_once(&fast_client(server.uri()), &store).await.unwrap();
     assert_eq!(pushed, 0);
@@ -117,41 +123,61 @@ async fn network_failure_aborts_pass_leaving_ops_pending() {
 #[tokio::test]
 async fn conflict_on_one_target_does_not_block_another() {
     let store = page_store_with_todo();
-    store.lock().unwrap().replace_page_blocks(
-        "p1",
-        &[
-            BlockRec {
-                id: "b1".into(), page_id: "p1".into(), parent_block_id: None, ordinal: 0,
-                block_type: "to_do".into(), payload: r#"{"checked": false}"#.into(),
-                plain_text: "Buy milk".into(), has_children: false,
-            },
-            BlockRec {
-                id: "b2".into(), page_id: "p1".into(), parent_block_id: None, ordinal: 1,
-                block_type: "to_do".into(), payload: r#"{"checked": false}"#.into(),
-                plain_text: "Walk dog".into(), has_children: false,
-            },
-        ],
-    ).unwrap();
+    store
+        .lock()
+        .unwrap()
+        .replace_page_blocks(
+            "p1",
+            &[
+                BlockRec {
+                    id: "b1".into(),
+                    page_id: "p1".into(),
+                    parent_block_id: None,
+                    ordinal: 0,
+                    block_type: "to_do".into(),
+                    payload: r#"{"checked": false}"#.into(),
+                    plain_text: "Buy milk".into(),
+                    has_children: false,
+                },
+                BlockRec {
+                    id: "b2".into(),
+                    page_id: "p1".into(),
+                    parent_block_id: None,
+                    ordinal: 1,
+                    block_type: "to_do".into(),
+                    payload: r#"{"checked": false}"#.into(),
+                    plain_text: "Walk dog".into(),
+                    has_children: false,
+                },
+            ],
+        )
+        .unwrap();
     store.lock().unwrap().edit_toggle_todo("b1").unwrap();
     store.lock().unwrap().edit_toggle_todo("b2").unwrap();
 
     let server = MockServer::start().await;
     // Both ops share the same page, so both conflict-check against p1's edited time.
-    Mock::given(method("GET")).and(path("/v1/pages/p1"))
+    Mock::given(method("GET"))
+        .and(path("/v1/pages/p1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "object": "page", "id": "p1", "last_edited_time": "2026-07-05T10:00:00.000Z"
         })))
-        .mount(&server).await;
-    Mock::given(method("PATCH")).and(path("/v1/blocks/b1"))
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/v1/blocks/b1"))
         .respond_with(ResponseTemplate::new(400).set_body_json(json!({
             "code": "validation_error", "message": "bad"
         })))
-        .mount(&server).await;
-    Mock::given(method("PATCH")).and(path("/v1/blocks/b2"))
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/v1/blocks/b2"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "object": "block", "id": "b2", "last_edited_time": "2026-07-05T11:00:00.000Z"
         })))
-        .mount(&server).await;
+        .mount(&server)
+        .await;
 
     let pushed = push_once(&fast_client(server.uri()), &store).await.unwrap();
     assert_eq!(pushed, 1);

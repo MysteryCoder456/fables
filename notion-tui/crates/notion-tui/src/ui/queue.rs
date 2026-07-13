@@ -14,11 +14,17 @@ pub struct QueueView {
 
 impl QueueView {
     pub fn new(ops: Vec<OpRec>) -> QueueView {
-        QueueView { ops, cursor: 0, list_state: ListState::default() }
+        QueueView {
+            ops,
+            cursor: 0,
+            list_state: ListState::default(),
+        }
     }
 
     pub fn move_cursor(&mut self, delta: isize) {
-        if self.ops.is_empty() { return; }
+        if self.ops.is_empty() {
+            return;
+        }
         self.cursor = (self.cursor as isize + delta).clamp(0, self.ops.len() as isize - 1) as usize;
     }
 
@@ -33,23 +39,28 @@ pub fn render(f: &mut Frame, area: Rect, view: &mut QueueView, focused: bool, th
         .iter()
         .map(|op| {
             let err = op.error.as_deref().unwrap_or("");
-            ListItem::new(format!("#{} {} {} [{}] {}", op.seq, op.op_type, op.target_id, op.state, err))
+            ListItem::new(format!(
+                "#{} {} {} [{}] {}",
+                op.seq, op.op_type, op.target_id, op.state, err
+            ))
         })
         .collect();
-    let highlight = if focused { theme.highlight } else { ratatui::style::Style::default() };
+    let highlight = if focused {
+        theme.highlight
+    } else {
+        ratatui::style::Style::default()
+    };
     view.list_state.select(Some(view.cursor));
     f.render_stateful_widget(
-        List::new(items)
-            .highlight_style(highlight)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(theme.border)
-                    .title(Span::styled(
-                        " queue (r retry · p keep mine · t take theirs · e merge) ",
-                        theme.title,
-                    )),
-            ),
+        List::new(items).highlight_style(highlight).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(theme.border)
+                .title(Span::styled(
+                    " queue (r retry · p keep mine · t take theirs · e merge) ",
+                    theme.title,
+                )),
+        ),
         area,
         &mut view.list_state,
     );

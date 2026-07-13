@@ -61,7 +61,10 @@ fn toggle_todo_flips_checked_and_queues_op() {
     assert_eq!(ops[0].seq, receipt.op_seq);
     assert_eq!(ops[0].op_type, "update_block");
     assert_eq!(ops[0].target_id, "b1");
-    assert_eq!(ops[0].base_edited_time.as_deref(), Some("2026-01-01T00:00:00.000Z"));
+    assert_eq!(
+        ops[0].base_edited_time.as_deref(),
+        Some("2026-01-01T00:00:00.000Z")
+    );
 }
 
 #[test]
@@ -84,7 +87,9 @@ fn update_block_text_changes_payload_and_plain_text() {
 #[test]
 fn insert_block_after_shifts_siblings_and_queues_append() {
     let mut s = setup();
-    let (new_id, receipt) = s.edit_insert_block_after("p1", Some("b1"), "paragraph", "New block").unwrap();
+    let (new_id, receipt) = s
+        .edit_insert_block_after("p1", Some("b1"), "paragraph", "New block")
+        .unwrap();
 
     let blocks = s.page_blocks("p1").unwrap();
     let mut by_id: std::collections::HashMap<&str, &BlockRec> =

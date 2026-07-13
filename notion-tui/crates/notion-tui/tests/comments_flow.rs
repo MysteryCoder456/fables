@@ -8,18 +8,42 @@ use notion_tui::ui::page::PageView;
 fn store_with_commented_page() -> notion_sync::SharedStore {
     let mut s = Store::open_in_memory().unwrap();
     s.upsert_page(&PageRec {
-        id: "p1".into(), parent_type: "workspace".into(), parent_id: None,
-        title: "P".into(), icon: None, archived: false, last_edited_time: "t1".into(),
-    }).unwrap();
-    s.replace_page_blocks("p1", &[BlockRec {
-        id: "b1".into(), page_id: "p1".into(), parent_block_id: None, ordinal: 0,
-        block_type: "paragraph".into(), payload: "{}".into(), plain_text: "First".into(), has_children: false,
-    }]).unwrap();
-    s.replace_comments("p1", &[CommentRec {
-        id: "c1".into(), parent_id: "p1".into(), parent_kind: "page".into(),
-        thread_id: Some("d1".into()), author: "u1".into(), body: "existing".into(),
-        created_time: "t".into(),
-    }]).unwrap();
+        id: "p1".into(),
+        parent_type: "workspace".into(),
+        parent_id: None,
+        title: "P".into(),
+        icon: None,
+        archived: false,
+        last_edited_time: "t1".into(),
+    })
+    .unwrap();
+    s.replace_page_blocks(
+        "p1",
+        &[BlockRec {
+            id: "b1".into(),
+            page_id: "p1".into(),
+            parent_block_id: None,
+            ordinal: 0,
+            block_type: "paragraph".into(),
+            payload: "{}".into(),
+            plain_text: "First".into(),
+            has_children: false,
+        }],
+    )
+    .unwrap();
+    s.replace_comments(
+        "p1",
+        &[CommentRec {
+            id: "c1".into(),
+            parent_id: "p1".into(),
+            parent_kind: "page".into(),
+            thread_id: Some("d1".into()),
+            author: "u1".into(),
+            body: "existing".into(),
+            created_time: "t".into(),
+        }],
+    )
+    .unwrap();
     Arc::new(Mutex::new(s))
 }
 
@@ -34,7 +58,9 @@ fn app_on_page(store: notion_sync::SharedStore) -> App {
     app
 }
 
-fn key(c: char) -> KeyEvent { KeyEvent::from(KeyCode::Char(c)) }
+fn key(c: char) -> KeyEvent {
+    KeyEvent::from(KeyCode::Char(c))
+}
 
 #[test]
 fn c_opens_panel_with_page_comments_and_c_closes() {

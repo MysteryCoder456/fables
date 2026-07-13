@@ -28,8 +28,10 @@ fn block(id: &str, page_id: &str, ordinal: i64, text: &str) -> BlockRec {
 #[test]
 fn page_roundtrip_and_upsert_overwrites() {
     let s = Store::open_in_memory().unwrap();
-    s.upsert_page(&page("p1", "workspace", None, "Old title")).unwrap();
-    s.upsert_page(&page("p1", "workspace", None, "New title")).unwrap();
+    s.upsert_page(&page("p1", "workspace", None, "Old title"))
+        .unwrap();
+    s.upsert_page(&page("p1", "workspace", None, "New title"))
+        .unwrap();
     let got = s.get_page("p1").unwrap().unwrap();
     assert_eq!(got.title, "New title");
 }
@@ -38,8 +40,10 @@ fn page_roundtrip_and_upsert_overwrites() {
 fn replace_page_blocks_swaps_content() {
     let mut s = Store::open_in_memory().unwrap();
     s.upsert_page(&page("p1", "workspace", None, "P")).unwrap();
-    s.replace_page_blocks("p1", &[block("b1", "p1", 0, "one")]).unwrap();
-    s.replace_page_blocks("p1", &[block("b2", "p1", 0, "two")]).unwrap();
+    s.replace_page_blocks("p1", &[block("b1", "p1", 0, "one")])
+        .unwrap();
+    s.replace_page_blocks("p1", &[block("b2", "p1", 0, "two")])
+        .unwrap();
     let blocks = s.page_blocks("p1").unwrap();
     assert_eq!(blocks.len(), 1);
     assert_eq!(blocks[0].id, "b2");
@@ -52,8 +56,10 @@ fn replace_page_blocks_swaps_content() {
 fn sidebar_excludes_rows_and_archived() {
     let s = Store::open_in_memory().unwrap();
     s.upsert_page(&page("p1", "workspace", None, "Top")).unwrap();
-    s.upsert_page(&page("p2", "page_id", Some("p1"), "Child")).unwrap();
-    s.upsert_page(&page("r1", "data_source_id", Some("ds1"), "Row page")).unwrap();
+    s.upsert_page(&page("p2", "page_id", Some("p1"), "Child"))
+        .unwrap();
+    s.upsert_page(&page("r1", "data_source_id", Some("ds1"), "Row page"))
+        .unwrap();
     let mut archived = page("p3", "workspace", None, "Gone");
     archived.archived = true;
     s.upsert_page(&archived).unwrap();

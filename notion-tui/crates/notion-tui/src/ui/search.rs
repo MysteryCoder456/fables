@@ -22,7 +22,12 @@ pub enum SearchAction {
 
 impl SearchState {
     pub fn new() -> SearchState {
-        SearchState { input: String::new(), results: Vec::new(), cursor: 0, list_state: ListState::default() }
+        SearchState {
+            input: String::new(),
+            results: Vec::new(),
+            cursor: 0,
+            list_state: ListState::default(),
+        }
     }
 
     /// Typing edits the query; Up/Down move the result cursor (not j/k, which must
@@ -84,13 +89,15 @@ pub fn render(f: &mut Frame, state: &mut SearchState) {
         .split(popup);
 
     f.render_widget(
-        Paragraph::new(state.input.as_str())
-            .block(Block::default().borders(Borders::ALL).title(" search ")),
+        Paragraph::new(state.input.as_str()).block(Block::default().borders(Borders::ALL).title(" search ")),
         inner[0],
     );
 
-    let items: Vec<ListItem> =
-        state.results.iter().map(|h| ListItem::new(format!("{}  {}", h.title, h.snippet))).collect();
+    let items: Vec<ListItem> = state
+        .results
+        .iter()
+        .map(|h| ListItem::new(format!("{}  {}", h.title, h.snippet)))
+        .collect();
     state.list_state.select(Some(state.cursor));
     f.render_stateful_widget(
         List::new(items)
@@ -108,17 +115,30 @@ mod tests {
     #[test]
     fn typing_updates_query_and_esc_closes() {
         let mut s = SearchState::new();
-        assert!(matches!(s.on_key(KeyEvent::from(KeyCode::Char('a'))), SearchAction::QueryChanged));
+        assert!(matches!(
+            s.on_key(KeyEvent::from(KeyCode::Char('a'))),
+            SearchAction::QueryChanged
+        ));
         assert_eq!(s.input, "a");
-        assert!(matches!(s.on_key(KeyEvent::from(KeyCode::Backspace)), SearchAction::QueryChanged));
+        assert!(matches!(
+            s.on_key(KeyEvent::from(KeyCode::Backspace)),
+            SearchAction::QueryChanged
+        ));
         assert_eq!(s.input, "");
-        assert!(matches!(s.on_key(KeyEvent::from(KeyCode::Esc)), SearchAction::Close));
+        assert!(matches!(
+            s.on_key(KeyEvent::from(KeyCode::Esc)),
+            SearchAction::Close
+        ));
     }
 
     #[test]
     fn enter_opens_selected() {
         let mut s = SearchState::new();
-        s.results = vec![SearchHit { page_id: "p9".into(), title: "T".into(), snippet: "…".into() }];
+        s.results = vec![SearchHit {
+            page_id: "p9".into(),
+            title: "T".into(),
+            snippet: "…".into(),
+        }];
         match s.on_key(KeyEvent::from(KeyCode::Enter)) {
             SearchAction::Open(id) => assert_eq!(id, "p9"),
             other => panic!("expected Open, got {other:?}"),

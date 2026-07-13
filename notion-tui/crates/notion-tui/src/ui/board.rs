@@ -37,18 +37,38 @@ impl BoardView {
             group_property(&ds.schema_json).unwrap_or_else(|| ("".into(), "".into()));
         let mut columns = schema_options(&ds.schema_json, &group_prop, &group_type);
         columns.push("(none)".to_string());
-        BoardView { ds, group_prop, group_type, columns, rows, col: 0, card: 0, list_state: ListState::default() }
+        BoardView {
+            ds,
+            group_prop,
+            group_type,
+            columns,
+            rows,
+            col: 0,
+            card: 0,
+            list_state: ListState::default(),
+        }
     }
 
     fn row_group(&self, row: &RowRec) -> String {
         let props: Value = serde_json::from_str(&row.properties).unwrap_or_default();
-        let name = props[&self.group_prop][&self.group_type]["name"].as_str().unwrap_or("");
-        if name.is_empty() { "(none)".to_string() } else { name.to_string() }
+        let name = props[&self.group_prop][&self.group_type]["name"]
+            .as_str()
+            .unwrap_or("");
+        if name.is_empty() {
+            "(none)".to_string()
+        } else {
+            name.to_string()
+        }
     }
 
     pub fn cards_in(&self, col: usize) -> Vec<&RowRec> {
-        let Some(col_name) = self.columns.get(col) else { return Vec::new() };
-        self.rows.iter().filter(|r| &self.row_group(r) == col_name).collect()
+        let Some(col_name) = self.columns.get(col) else {
+            return Vec::new();
+        };
+        self.rows
+            .iter()
+            .filter(|r| &self.row_group(r) == col_name)
+            .collect()
     }
 
     pub fn selected_row_id(&self) -> Option<String> {
@@ -57,12 +77,16 @@ impl BoardView {
 
     pub fn move_cursor_card(&mut self, delta: isize) {
         let len = self.cards_in(self.col).len();
-        if len == 0 { return; }
+        if len == 0 {
+            return;
+        }
         self.card = (self.card as isize + delta).clamp(0, len as isize - 1) as usize;
     }
 
     pub fn move_cursor_col(&mut self, delta: isize) {
-        if self.columns.is_empty() { return; }
+        if self.columns.is_empty() {
+            return;
+        }
         self.col = (self.col as isize + delta).clamp(0, self.columns.len() as isize - 1) as usize;
         self.card = self.card.min(self.cards_in(self.col).len().saturating_sub(1));
     }
@@ -77,7 +101,11 @@ impl BoardView {
             return None;
         }
         let target = target as usize;
-        let value = if self.columns[target] == "(none)" { String::new() } else { self.columns[target].clone() };
+        let value = if self.columns[target] == "(none)" {
+            String::new()
+        } else {
+            self.columns[target].clone()
+        };
         self.col = target;
         Some((row_id, value))
     }
@@ -86,7 +114,10 @@ impl BoardView {
 pub fn render(f: &mut Frame, area: Rect, view: &mut BoardView, focused: bool, theme: &Theme) {
     let n = view.columns.len().max(1) as u32;
     let constraints: Vec<Constraint> = view.columns.iter().map(|_| Constraint::Ratio(1, n)).collect();
-    let cols = Layout::default().direction(Direction::Horizontal).constraints(constraints).split(area);
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(constraints)
+        .split(area);
     let active_col = view.col;
     let active_card = view.card;
     for (ci, rect) in cols.iter().enumerate() {
@@ -129,12 +160,15 @@ mod tests {
 
     fn ds() -> DataSourceRec {
         DataSourceRec {
-            id: "ds".into(), database_id: "db".into(), title: "Tasks".into(),
+            id: "ds".into(),
+            database_id: "db".into(),
+            title: "Tasks".into(),
             schema_json: json!({
                 "Name": {"type": "title"},
                 "Status": {"type": "status", "status": {"options": [
                     {"name": "Todo"}, {"name": "Doing"}, {"name": "Done"}]}}
-            }).to_string(),
+            })
+            .to_string(),
             last_edited_time: "t".into(),
         }
     }
@@ -145,18 +179,28 @@ mod tests {
             None => json!({"type": "status", "status": null}),
         };
         RowRec {
-            id: id.into(), data_source_id: "ds".into(),
+            id: id.into(),
+            data_source_id: "ds".into(),
             properties: json!({
                 "Name": {"type": "title", "title": [{"plain_text": name}]},
                 "Status": status_val
-            }).to_string(),
-            last_edited_time: "t".into(), archived: false,
+            })
+            .to_string(),
+            last_edited_time: "t".into(),
+            archived: false,
         }
     }
 
     #[test]
     fn groups_rows_by_status_options_plus_none_column() {
-        let v = BoardView::new(ds(), vec![row("r1", "A", Some("Todo")), row("r2", "B", Some("Done")), row("r3", "C", None)]);
+        let v = BoardView::new(
+            ds(),
+            vec![
+                row("r1", "A", Some("Todo")),
+                row("r2", "B", Some("Done")),
+                row("r3", "C", None),
+            ],
+        );
         assert_eq!(v.group_prop, "Status");
         assert_eq!(v.columns, vec!["Todo", "Doing", "Done", "(none)"]);
         assert_eq!(v.cards_in(0).len(), 1);
@@ -178,7 +222,9 @@ mod tests {
     #[test]
     fn no_groupable_property_means_no_board() {
         let plain = DataSourceRec {
-            id: "ds".into(), database_id: "db".into(), title: "T".into(),
+            id: "ds".into(),
+            database_id: "db".into(),
+            title: "T".into(),
             schema_json: json!({"Name": {"type": "title"}}).to_string(),
             last_edited_time: "t".into(),
         };

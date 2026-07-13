@@ -22,7 +22,8 @@ fn page_fixture(id: &str, title: &str, edited: &str) -> serde_json::Value {
 async fn search_paginates_and_parses() {
     let server = MockServer::start().await;
     // First page: sorted request, no cursor.
-    Mock::given(method("POST")).and(path("/v1/search"))
+    Mock::given(method("POST"))
+        .and(path("/v1/search"))
         .and(body_partial_json(json!({
             "sort": {"timestamp": "last_edited_time", "direction": "descending"}
         })))
@@ -32,9 +33,11 @@ async fn search_paginates_and_parses() {
             "next_cursor": "c2"
         })))
         .up_to_n_times(1)
-        .mount(&server).await;
+        .mount(&server)
+        .await;
     // Second page: with cursor c2, contains a data source.
-    Mock::given(method("POST")).and(path("/v1/search"))
+    Mock::given(method("POST"))
+        .and(path("/v1/search"))
         .and(body_partial_json(json!({"start_cursor": "c2"})))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "results": [{
@@ -47,7 +50,8 @@ async fn search_paginates_and_parses() {
             "has_more": false,
             "next_cursor": null
         })))
-        .mount(&server).await;
+        .mount(&server)
+        .await;
 
     let client = NotionClient::with_base_url("t", server.uri());
 

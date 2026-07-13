@@ -6,6 +6,16 @@ use ratatui::Frame;
 pub struct ConfirmState {
     pub message: String,
     pub ids: Vec<String>,
+    pub kind: ConfirmKind,
+}
+
+/// What a `y` on the confirm popup commits the user to.
+pub enum ConfirmKind {
+    /// Delete protected blocks whose marker lines were removed in the editor.
+    DeleteProtected,
+    /// Apply an edited document whose parse produced warnings (e.g. an
+    /// unclosed code fence swallowing the rest of the page).
+    ApplyDespiteWarnings,
 }
 
 pub enum ConfirmAction {

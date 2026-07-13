@@ -8,6 +8,12 @@ pub const NOTION_VERSION: &str = "2025-09-03";
 
 const MAX_ATTEMPTS: u32 = 5;
 
+#[derive(Clone, Copy, PartialEq)]
+enum Idempotency {
+    Safe,
+    Unsafe,
+}
+
 pub struct NotionClient {
     http: reqwest::Client,
     base_url: String,
@@ -15,6 +21,7 @@ pub struct NotionClient {
     min_interval: Duration,
     backoff_base: Duration,
     next_allowed: Mutex<Instant>,
+    request_timeout: Duration,
 }
 
 impl NotionClient {
@@ -23,13 +30,19 @@ impl NotionClient {
     }
 
     pub fn with_base_url(token: impl Into<String>, base_url: impl Into<String>) -> Self {
+        let request_timeout = Duration::from_secs(30);
         Self {
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(request_timeout)
+                .connect_timeout(Duration::from_secs(10))
+                .build()
+                .expect("reqwest client"),
             base_url: base_url.into().trim_end_matches('/').to_string(),
             token: token.into(),
             min_interval: Duration::from_millis(334),
             backoff_base: Duration::from_millis(250),
             next_allowed: Mutex::new(Instant::now()),
+            request_timeout,
         }
     }
 
@@ -39,20 +52,49 @@ impl NotionClient {
         self.backoff_base = backoff_base;
     }
 
-    pub async fn get_json(&self, path: &str) -> Result<Value, ApiError> {
-        self.request(reqwest::Method::GET, path, None).await
+    /// Test hook: shrink the per-request timeout (rebuilds the inner client).
+    pub fn set_request_timeout(&mut self, timeout: Duration) {
+        self.request_timeout = timeout;
+        self.http = reqwest::Client::builder()
+            .timeout(timeout)
+            .connect_timeout(timeout)
+            .build()
+            .expect("reqwest client");
     }
 
+    pub async fn get_json(&self, path: &str) -> Result<Value, ApiError> {
+        self.request(reqwest::Method::GET, path, None, Idempotency::Safe)
+            .await
+    }
+
+    /// Not idempotent: creates/mutates state. 5xx and connection errors are
+    /// NOT retried — the caller must verify-then-resend.
     pub async fn post_json(&self, path: &str, body: &Value) -> Result<Value, ApiError> {
-        self.request(reqwest::Method::POST, path, Some(body)).await
+        self.request(reqwest::Method::POST, path, Some(body), Idempotency::Unsafe)
+            .await
+    }
+
+    /// For read-only POSTs (search, data-source query) that are safe to retry.
+    pub async fn post_json_idempotent(&self, path: &str, body: &Value) -> Result<Value, ApiError> {
+        self.request(reqwest::Method::POST, path, Some(body), Idempotency::Safe)
+            .await
     }
 
     pub async fn patch_json(&self, path: &str, body: &Value) -> Result<Value, ApiError> {
-        self.request(reqwest::Method::PATCH, path, Some(body)).await
+        self.request(reqwest::Method::PATCH, path, Some(body), Idempotency::Safe)
+            .await
+    }
+
+    /// Not idempotent: mutates state (e.g. append_children). 5xx and
+    /// connection errors are NOT retried — the caller must verify-then-resend.
+    pub(crate) async fn patch_json_unsafe(&self, path: &str, body: &Value) -> Result<Value, ApiError> {
+        self.request(reqwest::Method::PATCH, path, Some(body), Idempotency::Unsafe)
+            .await
     }
 
     pub async fn delete_json(&self, path: &str) -> Result<Value, ApiError> {
-        self.request(reqwest::Method::DELETE, path, None).await
+        self.request(reqwest::Method::DELETE, path, None, Idempotency::Safe)
+            .await
     }
 
     async fn pace(&self) {
@@ -69,6 +111,7 @@ impl NotionClient {
         method: reqwest::Method,
         path: &str,
         body: Option<&Value>,
+        idempotency: Idempotency,
     ) -> Result<Value, ApiError> {
         for attempt in 0..MAX_ATTEMPTS {
             self.pace().await;
@@ -83,7 +126,7 @@ impl NotionClient {
             let resp = match req.send().await {
                 Ok(r) => r,
                 Err(e) => {
-                    if attempt + 1 == MAX_ATTEMPTS {
+                    if idempotency == Idempotency::Unsafe || attempt + 1 == MAX_ATTEMPTS {
                         return Err(e.into());
                     }
                     tokio::time::sleep(self.backoff_base * 2u32.pow(attempt)).await;
@@ -103,6 +146,14 @@ impl NotionClient {
                 continue;
             }
             if status.is_server_error() {
+                if idempotency == Idempotency::Unsafe {
+                    let v: Value = resp.json().await.unwrap_or_default();
+                    return Err(ApiError::Api {
+                        status: status.as_u16(),
+                        code: v["code"].as_str().unwrap_or("unknown").to_string(),
+                        message: v["message"].as_str().unwrap_or("").to_string(),
+                    });
+                }
                 tokio::time::sleep(self.backoff_base * 2u32.pow(attempt)).await;
                 continue;
             }

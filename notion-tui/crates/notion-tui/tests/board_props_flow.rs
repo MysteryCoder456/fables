@@ -58,7 +58,10 @@ fn p_on_a_board_opens_the_props_modal_for_the_selected_card() {
 
     let props = app.props.as_ref().expect("props modal should be open");
     assert_eq!(props.row_id, "r1");
-    assert!(props.fields.iter().any(|f| f.name == "Name" && f.value_text == "Ship it"));
+    assert!(props
+        .fields
+        .iter()
+        .any(|f| f.name == "Name" && f.value_text == "Ship it"));
 }
 
 #[test]
@@ -85,7 +88,11 @@ fn committing_a_board_props_edit_updates_the_row_and_refreshes_the_modal() {
 fn committing_a_group_property_edit_keeps_the_card_selected_in_its_new_column() {
     let mut s = Store::open_in_memory().unwrap();
     s.upsert_data_source(&ds()).unwrap();
-    s.replace_rows("ds1", &[row("r1", "Ship it", "Doing"), row("r2", "Buy milk", "Todo")]).unwrap();
+    s.replace_rows(
+        "ds1",
+        &[row("r1", "Ship it", "Doing"), row("r2", "Buy milk", "Todo")],
+    )
+    .unwrap();
     let store: notion_sync::SharedStore = Arc::new(Mutex::new(s));
     let mut app = App::new(store);
     app.focus = Focus::Main;
@@ -123,7 +130,10 @@ fn moving_a_card_with_the_modal_closed_does_not_open_the_props_modal() {
 
     dispatch_key(&mut app, KeyEvent::from(KeyCode::Char('J')));
 
-    assert!(app.props.is_none(), "moving a card should not pop open the properties modal");
+    assert!(
+        app.props.is_none(),
+        "moving a card should not pop open the properties modal"
+    );
     match &app.view {
         View::Board(b) => assert_eq!(b.col, 2, "card should have moved to the Doing column"),
         _ => panic!("expected to remain on the board view"),

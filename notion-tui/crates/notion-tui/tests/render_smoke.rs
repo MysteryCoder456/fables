@@ -34,8 +34,18 @@ fn renders_sidebar_tree() {
     let mut app = App::new(test_store());
     app.sync_status = notion_sync::SyncStatus::Idle { updated: 0 };
     app.sidebar = SidebarState::new(vec![
-        TreeNode { id: "p1".into(), title: "Roadmap".into(), parent_id: None, kind: NodeKind::Page },
-        TreeNode { id: "p2".into(), title: "Notes".into(), parent_id: None, kind: NodeKind::Page },
+        TreeNode {
+            id: "p1".into(),
+            title: "Roadmap".into(),
+            parent_id: None,
+            kind: NodeKind::Page,
+        },
+        TreeNode {
+            id: "p2".into(),
+            title: "Notes".into(),
+            parent_id: None,
+            kind: NodeKind::Page,
+        },
         TreeNode {
             id: "ds1".into(),
             title: "Tasks".into(),
@@ -69,19 +79,34 @@ fn renders_page_view() {
     };
     let blocks = vec![
         BlockRec {
-            id: "h1".into(), page_id: "p1".into(), parent_block_id: None, ordinal: 0,
-            block_type: "heading_1".into(), payload: "{}".into(),
-            plain_text: "Q3 Plan".into(), has_children: false,
+            id: "h1".into(),
+            page_id: "p1".into(),
+            parent_block_id: None,
+            ordinal: 0,
+            block_type: "heading_1".into(),
+            payload: "{}".into(),
+            plain_text: "Q3 Plan".into(),
+            has_children: false,
         },
         BlockRec {
-            id: "t1".into(), page_id: "p1".into(), parent_block_id: None, ordinal: 1,
-            block_type: "to_do".into(), payload: r#"{"checked": false}"#.into(),
-            plain_text: "Ship it".into(), has_children: false,
+            id: "t1".into(),
+            page_id: "p1".into(),
+            parent_block_id: None,
+            ordinal: 1,
+            block_type: "to_do".into(),
+            payload: r#"{"checked": false}"#.into(),
+            plain_text: "Ship it".into(),
+            has_children: false,
         },
         BlockRec {
-            id: "cp".into(), page_id: "p1".into(), parent_block_id: None, ordinal: 2,
-            block_type: "child_page".into(), payload: "{}".into(),
-            plain_text: "Sub page".into(), has_children: false,
+            id: "cp".into(),
+            page_id: "p1".into(),
+            parent_block_id: None,
+            ordinal: 2,
+            block_type: "child_page".into(),
+            payload: "{}".into(),
+            plain_text: "Sub page".into(),
+            has_children: false,
         },
     ];
     app.view = View::Page(PageView::new(page_rec, blocks));

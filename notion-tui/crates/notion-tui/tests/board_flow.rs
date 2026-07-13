@@ -8,26 +8,41 @@ use serde_json::json;
 fn store_with_board_ds() -> notion_sync::SharedStore {
     let mut s = Store::open_in_memory().unwrap();
     s.upsert_data_source(&DataSourceRec {
-        id: "ds".into(), database_id: "db".into(), title: "Tasks".into(),
+        id: "ds".into(),
+        database_id: "db".into(),
+        title: "Tasks".into(),
         schema_json: json!({
             "Name": {"type": "title"},
             "Status": {"type": "status", "status": {"options": [{"name": "Todo"}, {"name": "Done"}]}}
-        }).to_string(),
+        })
+        .to_string(),
         last_edited_time: "t".into(),
-    }).unwrap();
-    s.replace_rows("ds", &[RowRec {
-        id: "r1".into(), data_source_id: "ds".into(),
-        properties: json!({
-            "Name": {"type": "title", "title": [{"plain_text": "Task A"}]},
-            "Status": {"type": "status", "status": {"name": "Todo"}}
-        }).to_string(),
-        last_edited_time: "t0".into(), archived: false,
-    }]).unwrap();
+    })
+    .unwrap();
+    s.replace_rows(
+        "ds",
+        &[RowRec {
+            id: "r1".into(),
+            data_source_id: "ds".into(),
+            properties: json!({
+                "Name": {"type": "title", "title": [{"plain_text": "Task A"}]},
+                "Status": {"type": "status", "status": {"name": "Todo"}}
+            })
+            .to_string(),
+            last_edited_time: "t0".into(),
+            archived: false,
+        }],
+    )
+    .unwrap();
     Arc::new(Mutex::new(s))
 }
 
-fn key(c: char) -> KeyEvent { KeyEvent::from(KeyCode::Char(c)) }
-fn shift(c: char) -> KeyEvent { KeyEvent::new(KeyCode::Char(c), KeyModifiers::SHIFT) }
+fn key(c: char) -> KeyEvent {
+    KeyEvent::from(KeyCode::Char(c))
+}
+fn shift(c: char) -> KeyEvent {
+    KeyEvent::new(KeyCode::Char(c), KeyModifiers::SHIFT)
+}
 
 #[test]
 fn v_toggles_table_to_board_and_back() {

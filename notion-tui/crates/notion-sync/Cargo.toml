@@ -14,6 +14,7 @@ notion-tui-api = { path = "../notion-api", version = "0.1.1" }
 notion-tui-store = { path = "../notion-store", version = "0.1.1" }
 tokio = { workspace = true }
 serde_json = { workspace = true }
+futures = { workspace = true }
 
 [dev-dependencies]
 wiremock = { workspace = true }

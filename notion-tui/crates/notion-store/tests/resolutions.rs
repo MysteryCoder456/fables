@@ -3,13 +3,29 @@ use notion_store::{BlockRec, PageRec, ResolvedTarget, Store};
 fn store_with_todo() -> (Store, i64) {
     let mut s = Store::open_in_memory().unwrap();
     s.upsert_page(&PageRec {
-        id: "p1".into(), parent_type: "workspace".into(), parent_id: None,
-        title: "P".into(), icon: None, archived: false, last_edited_time: "t1".into(),
-    }).unwrap();
-    s.replace_page_blocks("p1", &[BlockRec {
-        id: "b1".into(), page_id: "p1".into(), parent_block_id: None, ordinal: 0,
-        block_type: "paragraph".into(), payload: "{}".into(), plain_text: "local text".into(), has_children: false,
-    }]).unwrap();
+        id: "p1".into(),
+        parent_type: "workspace".into(),
+        parent_id: None,
+        title: "P".into(),
+        icon: None,
+        archived: false,
+        last_edited_time: "t1".into(),
+    })
+    .unwrap();
+    s.replace_page_blocks(
+        "p1",
+        &[BlockRec {
+            id: "b1".into(),
+            page_id: "p1".into(),
+            parent_block_id: None,
+            ordinal: 0,
+            block_type: "paragraph".into(),
+            payload: "{}".into(),
+            plain_text: "local text".into(),
+            has_children: false,
+        }],
+    )
+    .unwrap();
     let receipt = s.edit_update_block_text("b1", "local edit").unwrap();
     (s, receipt.op_seq)
 }
@@ -48,7 +64,8 @@ fn take_theirs_drops_op_clears_dirty_and_names_the_page_to_refetch() {
 fn merge_replaces_conflicted_op_with_fresh_edit_based_on_remote_time() {
     let (mut s, seq) = store_with_todo();
     s.set_op_state(seq, "conflicted", None).unwrap();
-    s.resolve_conflict_merge(seq, "b1", "merged text", "t9-remote").unwrap();
+    s.resolve_conflict_merge(seq, "b1", "merged text", "t9-remote")
+        .unwrap();
 
     let ops = s.ops().unwrap();
     assert_eq!(ops.len(), 1);
@@ -56,7 +73,12 @@ fn merge_replaces_conflicted_op_with_fresh_edit_based_on_remote_time() {
     assert_eq!(ops[0].state, "pending");
     assert_eq!(ops[0].base_edited_time.as_deref(), Some("t9-remote"));
 
-    let b1 = s.page_blocks("p1").unwrap().into_iter().find(|b| b.id == "b1").unwrap();
+    let b1 = s
+        .page_blocks("p1")
+        .unwrap()
+        .into_iter()
+        .find(|b| b.id == "b1")
+        .unwrap();
     assert_eq!(b1.plain_text, "merged text");
     assert!(s.is_page_dirty("p1").unwrap());
 }

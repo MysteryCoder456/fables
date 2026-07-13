@@ -14,13 +14,17 @@ pub fn named(name: &str) -> Theme {
             highlight: Style::default().bg(Color::Indexed(24)).fg(Color::White),
             status: Style::default().bg(Color::Indexed(236)).fg(Color::Indexed(250)),
             border: Style::default().fg(Color::Indexed(240)),
-            title: Style::default().fg(Color::Indexed(75)).add_modifier(Modifier::BOLD),
+            title: Style::default()
+                .fg(Color::Indexed(75))
+                .add_modifier(Modifier::BOLD),
         },
         "light" => Theme {
             highlight: Style::default().bg(Color::Indexed(153)).fg(Color::Black),
             status: Style::default().bg(Color::Indexed(252)).fg(Color::Indexed(236)),
             border: Style::default().fg(Color::Indexed(248)),
-            title: Style::default().fg(Color::Indexed(25)).add_modifier(Modifier::BOLD),
+            title: Style::default()
+                .fg(Color::Indexed(25))
+                .add_modifier(Modifier::BOLD),
         },
         _ => Theme {
             // Terminal-native: exactly the pre-theme look.

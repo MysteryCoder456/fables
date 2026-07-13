@@ -8,8 +8,14 @@ pub fn run_with(
     mut validate: impl FnMut(&str) -> Option<String>,
 ) -> anyhow::Result<String> {
     writeln!(output, "notion-tui first-run setup")?;
-    writeln!(output, "Create an internal integration at https://www.notion.so/profile/integrations")?;
-    writeln!(output, "and share the pages you want with it, then paste the token below.")?;
+    writeln!(
+        output,
+        "Create an internal integration at https://www.notion.so/profile/integrations"
+    )?;
+    writeln!(
+        output,
+        "and share the pages you want with it, then paste the token below."
+    )?;
     for line in input.lines() {
         let token = line?.trim().to_string();
         if token.is_empty() {
@@ -46,7 +52,9 @@ pub async fn run() -> anyhow::Result<String> {
     match crate::config::store_token(&token)? {
         crate::config::TokenSink::Keyring => println!("token saved to system keyring"),
         crate::config::TokenSink::File => {
-            println!("warning: no keyring available — token saved to ~/.config/notion-tui/config.toml (0600)");
+            println!(
+                "warning: no keyring available — token saved to ~/.config/notion-tui/config.toml (0600)"
+            );
         }
     }
     Ok(token)

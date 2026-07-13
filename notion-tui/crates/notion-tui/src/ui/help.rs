@@ -45,7 +45,11 @@ pub fn board_hints(keymap: &Keymap) -> String {
 
 pub fn render(f: &mut Frame, keymap: &Keymap) {
     let area = f.area();
-    let popup = centered_rect((area.width * 3 / 4).clamp(40, 70), (area.height * 3 / 4).clamp(10, 32), area);
+    let popup = centered_rect(
+        (area.width * 3 / 4).clamp(40, 70),
+        (area.height * 3 / 4).clamp(10, 32),
+        area,
+    );
     f.render_widget(Clear, popup);
     let items: Vec<ListItem> = Keymap::actions()
         .iter()
@@ -55,7 +59,11 @@ pub fn render(f: &mut Frame, keymap: &Keymap) {
         })
         .collect();
     f.render_widget(
-        List::new(items).block(Block::default().borders(Borders::ALL).title(" help (any key to close) ")),
+        List::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" help (any key to close) "),
+        ),
         popup,
     );
 }

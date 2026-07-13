@@ -21,11 +21,19 @@ pub enum PaletteAction {
 
 impl PaletteState {
     pub fn new() -> PaletteState {
-        PaletteState { input: String::new(), cursor: 0, list_state: ListState::default() }
+        PaletteState {
+            input: String::new(),
+            cursor: 0,
+            list_state: ListState::default(),
+        }
     }
 
     pub fn matches(&self) -> Vec<&'static str> {
-        COMMANDS.iter().copied().filter(|c| c.contains(self.input.as_str())).collect()
+        COMMANDS
+            .iter()
+            .copied()
+            .filter(|c| c.contains(self.input.as_str()))
+            .collect()
     }
 
     pub fn on_key(&mut self, key: KeyEvent) -> PaletteAction {

@@ -36,7 +36,8 @@ fn child_database_block(id: &str, page_id: &str, title: &str) -> BlockRec {
 fn store_with_page_and_linked_database() -> notion_sync::SharedStore {
     let mut s = Store::open_in_memory().unwrap();
     s.upsert_page(&page("p1", "Marc")).unwrap();
-    s.replace_page_blocks("p1", &[child_database_block("db1", "p1", "Tracker")]).unwrap();
+    s.replace_page_blocks("p1", &[child_database_block("db1", "p1", "Tracker")])
+        .unwrap();
     s.upsert_data_source(&DataSourceRec {
         id: "ds1".into(),
         database_id: "db1".into(),
@@ -117,7 +118,10 @@ fn toggling_board_with_no_table_open_sets_a_notice() {
 
     app.toggle_board();
 
-    assert!(app.notice.is_some(), "toggling board with nothing open should explain why");
+    assert!(
+        app.notice.is_some(),
+        "toggling board with nothing open should explain why"
+    );
 }
 
 #[test]
@@ -142,7 +146,10 @@ fn toggling_board_without_a_groupable_property_sets_a_notice() {
         View::Table(_) => {}
         _ => panic!("should stay on the table"),
     }
-    assert!(app.notice.is_some(), "should explain why board mode isn't available");
+    assert!(
+        app.notice.is_some(),
+        "should explain why board mode isn't available"
+    );
 }
 
 #[test]
@@ -158,7 +165,12 @@ fn v_on_an_unsynced_sidebar_database_keeps_the_specific_not_found_notice() {
         parent_id: None,
         kind: NodeKind::DataSource,
     });
-    let idx = app.sidebar.visible().iter().position(|v| v.node.id == "unsynced-ds").unwrap();
+    let idx = app
+        .sidebar
+        .visible()
+        .iter()
+        .position(|v| v.node.id == "unsynced-ds")
+        .unwrap();
     app.sidebar.cursor = idx;
 
     dispatch_key(&mut app, KeyEvent::from(KeyCode::Char('v')));
@@ -174,7 +186,8 @@ fn v_on_an_unsynced_sidebar_database_keeps_the_specific_not_found_notice() {
 fn v_on_an_unsynced_child_database_block_keeps_the_specific_not_found_notice() {
     let mut s = Store::open_in_memory().unwrap();
     s.upsert_page(&page("p1", "Marc")).unwrap();
-    s.replace_page_blocks("p1", &[child_database_block("missing-db", "p1", "Tracker")]).unwrap();
+    s.replace_page_blocks("p1", &[child_database_block("missing-db", "p1", "Tracker")])
+        .unwrap();
     let store: notion_sync::SharedStore = Arc::new(Mutex::new(s));
     let mut app = app_on_page(store, "p1");
 

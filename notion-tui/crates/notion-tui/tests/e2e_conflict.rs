@@ -14,24 +14,43 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 async fn conflicted_push_surfaces_in_queue_and_keep_mine_pushes_through() {
     let server = MockServer::start().await;
     // Remote page has moved past our base time -> conflict on first push.
-    Mock::given(method("GET")).and(path("/v1/pages/p1"))
+    Mock::given(method("GET"))
+        .and(path("/v1/pages/p1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "id": "p1", "last_edited_time": "2026-07-06T12:00:00.000Z"})))
-        .mount(&server).await;
-    Mock::given(method("PATCH")).and(path("/v1/blocks/b1"))
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/v1/blocks/b1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "b1"})))
-        .mount(&server).await;
+        .mount(&server)
+        .await;
 
     let mut s = Store::open_in_memory().unwrap();
     s.upsert_page(&PageRec {
-        id: "p1".into(), parent_type: "workspace".into(), parent_id: None,
-        title: "P".into(), icon: None, archived: false,
+        id: "p1".into(),
+        parent_type: "workspace".into(),
+        parent_id: None,
+        title: "P".into(),
+        icon: None,
+        archived: false,
         last_edited_time: "2026-07-06T10:00:00.000Z".into(),
-    }).unwrap();
-    s.replace_page_blocks("p1", &[BlockRec {
-        id: "b1".into(), page_id: "p1".into(), parent_block_id: None, ordinal: 0,
-        block_type: "paragraph".into(), payload: "{}".into(), plain_text: "x".into(), has_children: false,
-    }]).unwrap();
+    })
+    .unwrap();
+    s.replace_page_blocks(
+        "p1",
+        &[BlockRec {
+            id: "b1".into(),
+            page_id: "p1".into(),
+            parent_block_id: None,
+            ordinal: 0,
+            block_type: "paragraph".into(),
+            payload: "{}".into(),
+            plain_text: "x".into(),
+            has_children: false,
+        }],
+    )
+    .unwrap();
     s.edit_update_block_text("b1", "local edit").unwrap();
     let store = Arc::new(Mutex::new(s));
 

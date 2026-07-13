@@ -1,7 +1,7 @@
-use notion_api::{ApiError, NotionClient, ParentRef, SearchItem};
+use notion_api::{NotionClient, ParentRef, SearchItem};
 use notion_store::{BlockRec, DataSourceRec, PageRec, RowRec};
 
-use crate::SharedStore;
+use crate::{lock_store, SharedStore, SyncError};
 
 fn parent_cols(p: &ParentRef) -> (String, Option<String>) {
     match p {
@@ -14,8 +14,11 @@ fn parent_cols(p: &ParentRef) -> (String, Option<String>) {
     }
 }
 
-pub async fn pull_once(client: &NotionClient, store: &SharedStore) -> Result<u32, ApiError> {
-    let hwm = store.lock().unwrap().meta_get("hwm").ok().flatten().unwrap_or_default();
+pub async fn pull_once(client: &NotionClient, store: &SharedStore) -> Result<u32, SyncError> {
+    let hwm = lock_store(store)
+        .meta_get("hwm")
+        .map_err(|e| SyncError::Store(e.to_string()))?
+        .unwrap_or_default();
     let mut max_seen = hwm.clone();
     let mut updated: u32 = 0;
     let mut cursor: Option<String> = None;
@@ -39,9 +42,7 @@ pub async fn pull_once(client: &NotionClient, store: &SharedStore) -> Result<u32
             match item {
                 SearchItem::Page(p) => {
                     let (parent_type, parent_id) = parent_cols(&p.parent);
-                    store
-                        .lock()
-                        .unwrap()
+                    lock_store(store)
                         .upsert_page(&PageRec {
                             id: p.id.clone(),
                             parent_type,
@@ -51,8 +52,8 @@ pub async fn pull_once(client: &NotionClient, store: &SharedStore) -> Result<u32
                             archived: p.archived,
                             last_edited_time: p.last_edited_time.clone(),
                         })
-                        .ok();
-                    let dirty = store.lock().unwrap().is_page_dirty(&p.id).unwrap_or(false);
+                        .map_err(|e| SyncError::Store(e.to_string()))?;
+                    let dirty = lock_store(store).is_page_dirty(&p.id).unwrap_or(false);
                     if dirty {
                         continue;
                     }
@@ -70,7 +71,9 @@ pub async fn pull_once(client: &NotionClient, store: &SharedStore) -> Result<u32
                             has_children: f.block.has_children,
                         })
                         .collect();
-                    store.lock().unwrap().replace_page_blocks(&p.id, &recs).ok();
+                    lock_store(store)
+                        .replace_page_blocks(&p.id, &recs)
+                        .map_err(|e| SyncError::Store(e.to_string()))?;
                     let comments = client.list_comments(&p.id).await?;
                     let comment_recs: Vec<notion_store::CommentRec> = comments
                         .iter()
@@ -84,14 +87,14 @@ pub async fn pull_once(client: &NotionClient, store: &SharedStore) -> Result<u32
                             created_time: c.created_time.clone(),
                         })
                         .collect();
-                    store.lock().unwrap().replace_comments(&p.id, &comment_recs).ok();
+                    lock_store(store)
+                        .replace_comments(&p.id, &comment_recs)
+                        .map_err(|e| SyncError::Store(e.to_string()))?;
                     updated += 1;
                 }
                 SearchItem::DataSource(d) => {
                     let ds = client.get_data_source(&d.id).await?;
-                    store
-                        .lock()
-                        .unwrap()
+                    lock_store(store)
                         .upsert_data_source(&DataSourceRec {
                             id: ds.meta.id.clone(),
                             database_id: ds.meta.database_id.clone(),
@@ -99,7 +102,7 @@ pub async fn pull_once(client: &NotionClient, store: &SharedStore) -> Result<u32
                             schema_json: ds.schema.to_string(),
                             last_edited_time: ds.meta.last_edited_time.clone(),
                         })
-                        .ok();
+                        .map_err(|e| SyncError::Store(e.to_string()))?;
                     let rows = client.query_data_source_all(&d.id).await?;
                     let recs: Vec<RowRec> = rows
                         .iter()
@@ -111,7 +114,9 @@ pub async fn pull_once(client: &NotionClient, store: &SharedStore) -> Result<u32
                             archived: r.archived,
                         })
                         .collect();
-                    store.lock().unwrap().replace_rows(&d.id, &recs).ok();
+                    lock_store(store)
+                        .replace_rows(&d.id, &recs)
+                        .map_err(|e| SyncError::Store(e.to_string()))?;
                     updated += 1;
                 }
                 SearchItem::Other => {}
@@ -124,7 +129,9 @@ pub async fn pull_once(client: &NotionClient, store: &SharedStore) -> Result<u32
     }
 
     if max_seen > hwm {
-        store.lock().unwrap().meta_set("hwm", &max_seen).ok();
+        lock_store(store)
+            .meta_set("hwm", &max_seen)
+            .map_err(|e| SyncError::Store(e.to_string()))?;
     }
     Ok(updated)
 }

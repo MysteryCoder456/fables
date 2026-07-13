@@ -16,7 +16,7 @@ impl NotionClient {
         if let Some(c) = cursor {
             body["start_cursor"] = json!(c);
         }
-        let v = self.post_json("/v1/search", &body).await?;
+        let v = self.post_json_idempotent("/v1/search", &body).await?;
         Ok(SearchPage {
             items: v["results"]
                 .as_array()
@@ -82,16 +82,13 @@ impl NotionClient {
                 body["start_cursor"] = json!(c);
             }
             let v = self
-                .post_json(&format!("/v1/data_sources/{id}/query"), &body)
+                .post_json_idempotent(&format!("/v1/data_sources/{id}/query"), &body)
                 .await?;
             for item in v["results"].as_array().into_iter().flatten() {
                 rows.push(Row {
                     id: item["id"].as_str().unwrap_or_default().to_string(),
                     properties: item["properties"].clone(),
-                    last_edited_time: item["last_edited_time"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_string(),
+                    last_edited_time: item["last_edited_time"].as_str().unwrap_or_default().to_string(),
                     archived: item["archived"].as_bool().unwrap_or(false),
                 });
             }
@@ -126,7 +123,8 @@ impl NotionClient {
         if let Some(a) = after {
             body["after"] = json!(a);
         }
-        self.patch_json(&format!("/v1/blocks/{container_id}/children"), &body).await
+        self.patch_json_unsafe(&format!("/v1/blocks/{container_id}/children"), &body)
+            .await
     }
 
     pub async fn create_page(&self, parent: Value, properties: Value) -> Result<Value, ApiError> {
@@ -184,7 +182,11 @@ impl NotionClient {
         self.post_json("/v1/comments", &body).await
     }
 
-    pub async fn create_comment_reply(&self, discussion_id: &str, body_text: &str) -> Result<Value, ApiError> {
+    pub async fn create_comment_reply(
+        &self,
+        discussion_id: &str,
+        body_text: &str,
+    ) -> Result<Value, ApiError> {
         let body = json!({
             "discussion_id": discussion_id,
             "rich_text": [{"type": "text", "text": {"content": body_text}}]

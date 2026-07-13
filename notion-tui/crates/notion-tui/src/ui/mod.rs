@@ -130,8 +130,14 @@ mod tests {
 
     #[test]
     fn status_line_appends_pending_count() {
-        assert_eq!(status_line(&SyncStatus::Idle { updated: 0 }, 0, 0, None, None), "✓ synced");
-        assert_eq!(status_line(&SyncStatus::Idle { updated: 0 }, 3, 0, None, None), "✓ synced · 3 pending");
+        assert_eq!(
+            status_line(&SyncStatus::Idle { updated: 0 }, 0, 0, None, None),
+            "✓ synced"
+        );
+        assert_eq!(
+            status_line(&SyncStatus::Idle { updated: 0 }, 3, 0, None, None),
+            "✓ synced · 3 pending"
+        );
     }
 
     #[test]
@@ -145,7 +151,13 @@ mod tests {
     #[test]
     fn status_line_appends_notice() {
         assert_eq!(
-            status_line(&SyncStatus::Idle { updated: 0 }, 0, 0, Some("no table open to show as a board"), None),
+            status_line(
+                &SyncStatus::Idle { updated: 0 },
+                0,
+                0,
+                Some("no table open to show as a board"),
+                None
+            ),
             "✓ synced · no table open to show as a board"
         );
     }
@@ -153,7 +165,13 @@ mod tests {
     #[test]
     fn status_line_appends_hints() {
         assert_eq!(
-            status_line(&SyncStatus::Idle { updated: 0 }, 0, 0, None, Some("J move card right")),
+            status_line(
+                &SyncStatus::Idle { updated: 0 },
+                0,
+                0,
+                None,
+                Some("J move card right")
+            ),
             "✓ synced · J move card right"
         );
     }

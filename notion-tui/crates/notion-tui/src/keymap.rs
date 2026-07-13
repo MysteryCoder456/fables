@@ -74,7 +74,10 @@ impl Keymap {
     /// Matches on the key code, rejecting Ctrl/Alt chords (those bindings are
     /// fixed). SHIFT is allowed through because uppercase Char events carry it.
     pub fn is(&self, action: &str, key: KeyEvent) -> bool {
-        if key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
+        if key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        {
             return false;
         }
         self.map.get(action) == Some(&key.code)
@@ -86,15 +89,33 @@ impl Keymap {
 
     pub fn actions() -> &'static [(&'static str, &'static str)] {
         const LIST: &[(&str, &str)] = &[
-            ("quit", "quit the app"), ("sidebar", "toggle sidebar"), ("search", "search"),
-            ("undo", "undo last edit"), ("edit", "edit page in $EDITOR"), ("comments", "comments panel"),
-            ("queue", "queue/conflicts screen"), ("board", "toggle board view"), ("help", "help overlay"),
-            ("palette", "command palette"), ("insert", "edit block text"), ("append", "add block below"),
-            ("new_row", "new database row"), ("props", "property form"), ("delete", "delete (press twice)"),
-            ("sort", "sort by column"), ("up", "cursor up"), ("down", "cursor down"),
-            ("left", "left / collapse"), ("right", "right / expand"), ("top", "jump to top"),
-            ("bottom", "jump to bottom"), ("open", "open / follow"), ("back", "back"),
-            ("toggle", "toggle to-do"), ("move_card_next", "move card right"), ("move_card_prev", "move card left"),
+            ("quit", "quit the app"),
+            ("sidebar", "toggle sidebar"),
+            ("search", "search"),
+            ("undo", "undo last edit"),
+            ("edit", "edit page in $EDITOR"),
+            ("comments", "comments panel"),
+            ("queue", "queue/conflicts screen"),
+            ("board", "toggle board view"),
+            ("help", "help overlay"),
+            ("palette", "command palette"),
+            ("insert", "edit block text"),
+            ("append", "add block below"),
+            ("new_row", "new database row"),
+            ("props", "property form"),
+            ("delete", "delete (press twice)"),
+            ("sort", "sort by column"),
+            ("up", "cursor up"),
+            ("down", "cursor down"),
+            ("left", "left / collapse"),
+            ("right", "right / expand"),
+            ("top", "jump to top"),
+            ("bottom", "jump to bottom"),
+            ("open", "open / follow"),
+            ("back", "back"),
+            ("toggle", "toggle to-do"),
+            ("move_card_next", "move card right"),
+            ("move_card_prev", "move card left"),
         ];
         LIST
     }

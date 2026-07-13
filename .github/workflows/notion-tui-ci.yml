@@ -1,0 +1,34 @@
+name: notion-tui CI
+
+on:
+  push:
+    branches: [main]
+    paths: ["notion-tui/**", ".github/workflows/notion-tui-ci.yml"]
+  pull_request:
+    paths: ["notion-tui/**", ".github/workflows/notion-tui-ci.yml"]
+
+defaults:
+  run:
+    working-directory: notion-tui
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: notion-tui
+      - name: Test
+        run: cargo test --workspace
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Format
+        run: cargo fmt --check

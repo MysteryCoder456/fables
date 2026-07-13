@@ -119,9 +119,7 @@ impl Block {
         let block_type = v["type"].as_str().unwrap_or("unsupported").to_string();
         let payload = v[&block_type].clone();
         let plain_text = match block_type.as_str() {
-            "child_page" | "child_database" => {
-                payload["title"].as_str().unwrap_or_default().to_string()
-            }
+            "child_page" | "child_database" => payload["title"].as_str().unwrap_or_default().to_string(),
             _ => rich_text_plain(&payload["rich_text"]),
         };
         Block {
