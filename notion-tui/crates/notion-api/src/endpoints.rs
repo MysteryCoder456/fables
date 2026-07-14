@@ -146,6 +146,11 @@ impl NotionClient {
         Ok(v["last_edited_time"].as_str().unwrap_or_default().to_string())
     }
 
+    pub async fn get_page(&self, page_id: &str) -> Result<PageMeta, ApiError> {
+        let v = self.get_json(&format!("/v1/pages/{page_id}")).await?;
+        Ok(PageMeta::parse(&v))
+    }
+
     /// Validates the token; returns the integration's bot name.
     pub async fn me(&self) -> Result<String, ApiError> {
         let v = self.get_json("/v1/users/me").await?;

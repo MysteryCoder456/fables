@@ -40,6 +40,18 @@ fn highlight_code_line(line: &str, language: &str) -> Line<'static> {
     Line::from(spans)
 }
 
+fn caption_text(payload: &serde_json::Value) -> String {
+    payload["caption"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|t| t["plain_text"].as_str())
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .unwrap_or_default()
+}
+
 pub struct BlockLine {
     pub block_id: String,
     pub text: String,
@@ -124,7 +136,24 @@ impl PageView {
                     }
                     continue;
                 }
-                _ => (format!("⍰ {}", b.plain_text), None),
+                "image" => {
+                    let caption = caption_text(&payload);
+                    let caption = if caption.is_empty() {
+                        "untitled".to_string()
+                    } else {
+                        caption
+                    };
+                    (format!("[image: {caption}]"), None)
+                }
+                "bookmark" => (
+                    format!("[bookmark: {}]", payload["url"].as_str().unwrap_or("")),
+                    None,
+                ),
+                "embed" => (
+                    format!("[embed: {}]", payload["url"].as_str().unwrap_or("")),
+                    None,
+                ),
+                _ => (format!("[{}]", b.block_type), None),
             };
             out.push(BlockLine {
                 block_id: b.id.clone(),
@@ -348,5 +377,58 @@ mod tests {
         assert!(lines[0].text.contains("let x = 1;"));
         let spans = lines[0].spans.as_ref().expect("code lines carry styled spans");
         assert!(spans.spans.iter().any(|s| s.style.fg.is_some()));
+    }
+
+    #[test]
+    fn image_block_shows_caption_placeholder() {
+        let v = PageView::new(
+            page(),
+            vec![rec(
+                "i1",
+                None,
+                0,
+                "image",
+                "",
+                r#"{"caption": [{"plain_text": "A chart"}]}"#,
+            )],
+        );
+        assert_eq!(v.lines()[0].text, "[image: A chart]");
+    }
+
+    #[test]
+    fn image_block_without_caption_shows_untitled() {
+        let v = PageView::new(page(), vec![rec("i1", None, 0, "image", "", "{}")]);
+        assert_eq!(v.lines()[0].text, "[image: untitled]");
+    }
+
+    #[test]
+    fn bookmark_block_shows_url_placeholder() {
+        let v = PageView::new(
+            page(),
+            vec![rec(
+                "b1",
+                None,
+                0,
+                "bookmark",
+                "",
+                r#"{"url": "https://example.com"}"#,
+            )],
+        );
+        assert_eq!(v.lines()[0].text, "[bookmark: https://example.com]");
+    }
+
+    #[test]
+    fn table_and_embed_and_other_unsupported_blocks_get_named_placeholders() {
+        let v = PageView::new(
+            page(),
+            vec![
+                rec("t1", None, 0, "table", "", "{}"),
+                rec("e1", None, 1, "embed", "", r#"{"url": "https://youtu.be/x"}"#),
+                rec("v1", None, 2, "video", "", "{}"),
+            ],
+        );
+        let lines = v.lines();
+        let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, vec!["[table]", "[embed: https://youtu.be/x]", "[video]"]);
     }
 }

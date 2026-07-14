@@ -1,6 +1,7 @@
 pub mod app;
 pub mod config;
 pub mod editor;
+pub mod fuzzy;
 pub mod keymap;
 pub mod markdown;
 pub mod terminal;

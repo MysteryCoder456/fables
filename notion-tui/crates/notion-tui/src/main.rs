@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crossterm::event::{Event, EventStream, MouseEventKind};
+use crossterm::event::{Event, EventStream};
 use futures::StreamExt;
 use notion_tui::{app, config, terminal::TerminalGuard, ui};
 
@@ -24,6 +24,7 @@ async fn main() -> anyhow::Result<()> {
     let mut term = ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(std::io::stdout()))?;
 
     let mut app = app::App::new(store);
+    app.sync_notify = Some(handle.notify.clone());
     app.mouse = cfg.mouse;
     app.editor_override = cfg.editor.clone();
     app.keymap = notion_tui::keymap::Keymap::with_overrides(&cfg.keys);
@@ -49,11 +50,7 @@ async fn main() -> anyhow::Result<()> {
         tokio::select! {
             ev = events.next() => match ev {
                 Some(Ok(Event::Key(key))) => app::dispatch_key(&mut app, key),
-                Some(Ok(Event::Mouse(m))) => match m.kind {
-                    MouseEventKind::ScrollDown => app::scroll(&mut app, 3),
-                    MouseEventKind::ScrollUp => app::scroll(&mut app, -3),
-                    _ => {}
-                },
+                Some(Ok(Event::Mouse(m))) => app::dispatch_mouse(&mut app, m),
                 Some(Ok(_)) => {}
                 _ => break,
             },
@@ -73,6 +70,7 @@ async fn main() -> anyhow::Result<()> {
                     app.refresh_current_view();
                     app.refresh_comments();
                 }
+                Some(app::AppMsg::PageGone(page_id)) => app.handle_page_gone(&page_id),
                 Some(m @ app::AppMsg::MergeReady { .. }) => {
                     let editor = notion_tui::editor::editor_command(app.editor_override.as_deref());
                     let mouse = app.mouse;

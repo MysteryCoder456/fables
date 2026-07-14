@@ -54,6 +54,8 @@ fn extract_page_id(op: &OpRec) -> Option<String> {
             let v: Value = serde_json::from_str(&op.payload).ok()?;
             v["page_id"].as_str().map(str::to_string)
         }
+        "rename_page" => Some(op.target_id.clone()),
+        "move_page" => Some(op.target_id.clone()),
         _ => None,
     }
 }
@@ -433,6 +435,58 @@ async fn push_create_comment(
     Ok(PushOutcome::Success)
 }
 
+async fn push_rename_page(
+    client: &NotionClient,
+    store: &SharedStore,
+    op: &OpRec,
+) -> Result<PushOutcome, ApiError> {
+    if let Some(base) = &op.base_edited_time {
+        if !base.is_empty() {
+            let current = client.get_page_edited_time(&op.target_id).await?;
+            if current > *base {
+                return Ok(PushOutcome::Conflicted);
+            }
+        }
+    }
+    let payload: Value = serde_json::from_str(&op.payload).unwrap_or_default();
+    let title = payload["title"].as_str().unwrap_or_default();
+    let body = json!({
+        "properties": {"title": {"title": [{"type": "text", "text": {"content": title}}]}}
+    });
+    client.update_page(&op.target_id, body).await?;
+
+    lock_store(store).delete_op(op.seq).ok();
+    if !remaining_ops_reference_page(store, &op.target_id) {
+        lock_store(store).clear_page_dirty(&op.target_id).ok();
+    }
+    Ok(PushOutcome::Success)
+}
+
+async fn push_move_page(
+    client: &NotionClient,
+    store: &SharedStore,
+    op: &OpRec,
+) -> Result<PushOutcome, ApiError> {
+    if let Some(base) = &op.base_edited_time {
+        if !base.is_empty() {
+            let current = client.get_page_edited_time(&op.target_id).await?;
+            if current > *base {
+                return Ok(PushOutcome::Conflicted);
+            }
+        }
+    }
+    let payload: Value = serde_json::from_str(&op.payload).unwrap_or_default();
+    let new_parent_id = payload["new_parent_id"].as_str().unwrap_or_default();
+    client
+        .update_page(&op.target_id, json!({"parent": {"page_id": new_parent_id}}))
+        .await?;
+    lock_store(store).delete_op(op.seq).ok();
+    if !remaining_ops_reference_page(store, &op.target_id) {
+        lock_store(store).clear_page_dirty(&op.target_id).ok();
+    }
+    Ok(PushOutcome::Success)
+}
+
 async fn push_one(client: &NotionClient, store: &SharedStore, op: &OpRec) -> Result<PushOutcome, ApiError> {
     match op.op_type.as_str() {
         "update_block" => push_update_block(client, store, op).await,
@@ -444,6 +498,8 @@ async fn push_one(client: &NotionClient, store: &SharedStore, op: &OpRec) -> Res
         "delete_row" => push_delete_row(client, store, op).await,
         "restore_row" => push_restore_row(client, store, op).await,
         "create_comment" => push_create_comment(client, store, op).await,
+        "rename_page" => push_rename_page(client, store, op).await,
+        "move_page" => push_move_page(client, store, op).await,
         other => Ok(PushOutcome::Failed(format!("unknown op_type {other}"))),
     }
 }

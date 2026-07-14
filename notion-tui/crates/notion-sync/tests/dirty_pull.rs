@@ -62,7 +62,10 @@ async fn pull_skips_block_fetch_for_dirty_page() {
             .unwrap();
     }
 
-    let updated = pull_once(&fast_client(server.uri()), &store).await.unwrap();
+    let (status_tx, _status_rx) = tokio::sync::watch::channel(notion_sync::SyncStatus::Starting);
+    let updated = pull_once(&fast_client(server.uri()), &store, &status_tx)
+        .await
+        .unwrap();
     assert_eq!(updated, 0);
 
     // Only the search request was made — no block-children fetch.

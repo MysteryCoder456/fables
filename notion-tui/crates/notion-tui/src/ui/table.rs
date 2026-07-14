@@ -1,5 +1,5 @@
 use notion_store::{DataSourceRec, RowRec};
-use ratatui::layout::{Constraint, Rect};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Row as TRow, Table, TableState};
@@ -8,9 +8,17 @@ use serde_json::Value;
 
 use crate::ui::theme::Theme;
 
+#[derive(Clone)]
 pub struct Column {
     pub name: String,
     pub prop_type: String,
+}
+
+#[derive(Clone)]
+pub struct FilterState {
+    /// `Some(col_idx)` filters that one column; `None` is free-text across the whole row.
+    pub col: Option<usize>,
+    pub query: String,
 }
 
 pub struct TableView {
@@ -21,6 +29,7 @@ pub struct TableView {
     pub sort: Option<(usize, bool)>,
     pub sort_col: usize,
     pub table_state: TableState,
+    pub filter: Option<FilterState>,
 }
 
 fn rich_text_plain(v: &Value) -> String {
@@ -117,6 +126,41 @@ pub fn schema_columns(schema_json: &str) -> Vec<Column> {
     columns
 }
 
+pub fn column_widths(columns: &[Column]) -> Vec<Constraint> {
+    columns
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            if i == 0 {
+                Constraint::Min(20)
+            } else {
+                Constraint::Length(14)
+            }
+        })
+        .collect()
+}
+
+/// x-coordinate where each column starts, for header-click hit-testing.
+/// Mirrors the same `Layout::horizontal(widths)` split the `Table` widget
+/// itself performs, so header clicks line up with rendered columns (modulo
+/// ratatui's own internal cell-spacing, which this doesn't attempt to
+/// replicate exactly — acceptable for a best-effort, non-required input).
+pub fn column_x_starts(area: Rect, columns: &[Column]) -> Vec<u16> {
+    let inner = Rect {
+        x: area.x + 1,
+        y: area.y + 1,
+        width: area.width.saturating_sub(2),
+        height: 1,
+    };
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(column_widths(columns))
+        .split(inner)
+        .iter()
+        .map(|r| r.x)
+        .collect()
+}
+
 impl TableView {
     pub fn new(ds: DataSourceRec, rows: Vec<RowRec>) -> TableView {
         let columns = schema_columns(&ds.schema_json);
@@ -128,6 +172,7 @@ impl TableView {
             sort: None,
             sort_col: 0,
             table_state: TableState::default(),
+            filter: None,
         }
     }
 
@@ -169,26 +214,59 @@ impl TableView {
         }
     }
 
+    fn matches_filter(&self, row: &RowRec) -> bool {
+        let Some(f) = &self.filter else { return true };
+        let q = f.query.to_lowercase();
+        match f.col {
+            Some(i) => self
+                .columns
+                .get(i)
+                .map(|c| self.cell(row, c).to_lowercase().contains(&q))
+                .unwrap_or(true),
+            None => self
+                .columns
+                .iter()
+                .any(|c| self.cell(row, c).to_lowercase().contains(&q)),
+        }
+    }
+
+    /// The rows actually shown: `self.rows` (already sorted by `apply_sort`)
+    /// with the active filter, if any, applied on top.
+    pub fn visible(&self) -> Vec<&RowRec> {
+        self.rows.iter().filter(|r| self.matches_filter(r)).collect()
+    }
+
     /// Position of the row with the given id in the current display order
-    /// (post-sort), if it still exists.
+    /// (post-sort, post-filter), if it still exists.
     pub fn rows_iter_position(&self, id: &str) -> Option<usize> {
-        self.rows.iter().position(|r| r.id == id)
+        self.visible().iter().position(|r| r.id == id)
     }
 
     /// Number of rows currently displayed.
     pub fn row_count(&self) -> usize {
-        self.rows.len()
+        self.visible().len()
     }
 
     pub fn move_cursor(&mut self, delta: isize) {
-        if self.rows.is_empty() {
+        let len = self.visible().len();
+        if len == 0 {
             return;
         }
-        self.cursor = (self.cursor as isize + delta).clamp(0, self.rows.len() as isize - 1) as usize;
+        self.cursor = (self.cursor as isize + delta).clamp(0, len as isize - 1) as usize;
     }
 
     pub fn selected_row_id(&self) -> Option<String> {
-        self.rows.get(self.cursor).map(|r| r.id.clone())
+        self.visible().get(self.cursor).map(|r| r.id.clone())
+    }
+}
+
+fn filter_suffix(filter: &Option<FilterState>, columns: &[Column]) -> String {
+    match filter {
+        None => String::new(),
+        Some(f) => match f.col.and_then(|i| columns.get(i)) {
+            Some(c) => format!(" — filter: {}~\"{}\"", c.name, f.query),
+            None => format!(" — filter: \"{}\"", f.query),
+        },
     }
 }
 
@@ -213,26 +291,15 @@ pub fn render(f: &mut Frame, area: Rect, view: &mut TableView, focused: bool, th
             .collect::<Vec<_>>(),
     )
     .style(Style::default().add_modifier(Modifier::BOLD));
-    let rows: Vec<TRow> = view
-        .rows
+    let visible = view.visible();
+    let rows: Vec<TRow> = visible
         .iter()
         .map(|r| {
             let cells: Vec<String> = view.columns.iter().map(|c| view.cell(r, c)).collect();
             TRow::new(cells)
         })
         .collect();
-    let widths: Vec<Constraint> = view
-        .columns
-        .iter()
-        .enumerate()
-        .map(|(i, _)| {
-            if i == 0 {
-                Constraint::Min(20)
-            } else {
-                Constraint::Length(14)
-            }
-        })
-        .collect();
+    let widths = column_widths(&view.columns);
     let highlight = if focused {
         theme.highlight
     } else {
@@ -247,7 +314,14 @@ pub fn render(f: &mut Frame, area: Rect, view: &mut TableView, focused: bool, th
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(theme.border)
-                    .title(Span::styled(format!(" {} ", view.ds.title), theme.title)),
+                    .title(Span::styled(
+                        format!(
+                            " {}{} ",
+                            view.ds.title,
+                            filter_suffix(&view.filter, &view.columns)
+                        ),
+                        theme.title,
+                    )),
             ),
         area,
         &mut view.table_state,
@@ -338,6 +412,64 @@ mod tests {
         assert_eq!(v.selected_row_id().as_deref(), Some("r2")); // "a task" first
         v.toggle_sort(0);
         assert_eq!(v.selected_row_id().as_deref(), Some("r1")); // descending
+    }
+
+    #[test]
+    fn column_x_starts_matches_column_widths_order() {
+        let cols = vec![
+            Column {
+                name: "Name".into(),
+                prop_type: "title".into(),
+            },
+            Column {
+                name: "Done".into(),
+                prop_type: "checkbox".into(),
+            },
+        ];
+        let area = Rect::new(0, 0, 50, 10);
+        let xs = column_x_starts(area, &cols);
+        assert_eq!(xs.len(), 2);
+        assert!(xs[1] > xs[0], "second column must start after the first");
+    }
+
+    #[test]
+    fn column_filter_hides_non_matching_rows() {
+        let mut v = TableView::new(
+            ds(),
+            vec![
+                row("r1", "Buy milk", false, "High"),
+                row("r2", "Buy eggs", false, "Low"),
+            ],
+        );
+        v.filter = Some(FilterState {
+            col: Some(2),
+            query: "high".into(),
+        }); // Prio column
+        let visible: Vec<&str> = v.visible().iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(visible, vec!["r1"]);
+    }
+
+    #[test]
+    fn free_text_filter_matches_any_column() {
+        let mut v = TableView::new(
+            ds(),
+            vec![
+                row("r1", "Buy milk", false, "High"),
+                row("r2", "Buy eggs", false, "Low"),
+            ],
+        );
+        v.filter = Some(FilterState {
+            col: None,
+            query: "eggs".into(),
+        });
+        let visible: Vec<&str> = v.visible().iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(visible, vec!["r2"]);
+    }
+
+    #[test]
+    fn no_filter_shows_every_row() {
+        let v = TableView::new(ds(), vec![row("r1", "Buy milk", false, "High")]);
+        assert_eq!(v.visible().len(), 1);
     }
 
     #[test]

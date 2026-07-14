@@ -45,7 +45,8 @@ async fn pull_stores_page_comments_for_changed_pages() {
         .await;
 
     let store = Arc::new(Mutex::new(Store::open_in_memory().unwrap()));
-    pull_once(&client(&server), &store).await.unwrap();
+    let (status_tx, _status_rx) = tokio::sync::watch::channel(notion_sync::SyncStatus::Starting);
+    pull_once(&client(&server), &store, &status_tx).await.unwrap();
 
     let comments = store.lock().unwrap().comments_for("p1").unwrap();
     assert_eq!(comments.len(), 1);

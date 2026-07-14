@@ -4,7 +4,17 @@ use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
-pub const COMMANDS: &[&str] = &["help", "queue", "board", "table", "quit"];
+pub const COMMANDS: &[&str] = &[
+    "help",
+    "queue",
+    "board",
+    "table",
+    "quit",
+    "rename",
+    "move page",
+    "group by",
+    "sync now",
+];
 
 pub struct PaletteState {
     pub input: String,
@@ -29,11 +39,8 @@ impl PaletteState {
     }
 
     pub fn matches(&self) -> Vec<&'static str> {
-        COMMANDS
-            .iter()
-            .copied()
-            .filter(|c| c.contains(self.input.as_str()))
-            .collect()
+        let items: Vec<(&'static str, String)> = COMMANDS.iter().map(|c| (*c, c.to_string())).collect();
+        crate::fuzzy::subsequence_rank(&self.input, items)
     }
 
     pub fn on_key(&mut self, key: KeyEvent) -> PaletteAction {
@@ -107,4 +114,23 @@ pub fn render(f: &mut Frame, state: &mut PaletteState) {
         inner[1],
         &mut state.list_state,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matches_are_subsequence_not_substring() {
+        let mut p = PaletteState::new();
+        p.input = "bd".to_string(); // not a substring of "board", but is a subsequence
+        assert!(p.matches().contains(&"board"));
+    }
+
+    #[test]
+    fn non_subsequence_input_matches_nothing() {
+        let mut p = PaletteState::new();
+        p.input = "zzz".to_string();
+        assert!(p.matches().is_empty());
+    }
 }

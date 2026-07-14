@@ -315,6 +315,129 @@ impl Store {
         Ok(())
     }
 
+    pub fn meta_delete(&self, key: &str) -> anyhow::Result<()> {
+        self.conn.execute("DELETE FROM sync_meta WHERE key = ?1", [key])?;
+        Ok(())
+    }
+
+    /// Mark-and-sweep reconciliation: removes local pages/data sources that
+    /// no longer appear in a fresh full workspace search (i.e. were deleted,
+    /// trashed, or un-shared from the integration remotely), together with
+    /// their orphaned blocks/rows. A page or data source with any pending
+    /// local op targeting it (directly, or indirectly via a block/row it
+    /// owns) survives regardless of `seen` — an edit racing a stale
+    /// reconciliation pass must never be silently discarded.
+    ///
+    /// As a circuit breaker against an anomalous/incomplete crawl (e.g. an
+    /// index-lag blip or a partial result set that nonetheless came back as
+    /// a successful response), an empty `seen` set on *both* fronts while the
+    /// local store is non-empty is treated as suspect rather than "the
+    /// workspace is genuinely empty": pruning is skipped entirely and both
+    /// counts are reported as zero.
+    pub fn prune_missing(
+        &mut self,
+        seen_page_ids: &[String],
+        seen_ds_ids: &[String],
+    ) -> anyhow::Result<(u32, u32)> {
+        if seen_page_ids.is_empty() && seen_ds_ids.is_empty() {
+            let local_pages: i64 = self
+                .conn
+                .query_row("SELECT count(*) FROM pages", [], |r| r.get(0))?;
+            let local_ds: i64 = self
+                .conn
+                .query_row("SELECT count(*) FROM data_sources", [], |r| r.get(0))?;
+            if local_pages > 0 || local_ds > 0 {
+                eprintln!(
+                    "notion-store: prune_missing skipped — crawl returned zero pages and zero \
+                     data sources while the local store has {local_pages} page(s) and {local_ds} \
+                     data source(s); treating as an anomalous/incomplete crawl rather than pruning"
+                );
+                return Ok((0, 0));
+            }
+        }
+        let tx = self.conn.transaction()?;
+        tx.execute_batch(
+            "CREATE TEMP TABLE IF NOT EXISTS seen_pages (id TEXT PRIMARY KEY);
+             DELETE FROM seen_pages;
+             CREATE TEMP TABLE IF NOT EXISTS seen_ds (id TEXT PRIMARY KEY);
+             DELETE FROM seen_ds;",
+        )?;
+        {
+            let mut stmt = tx.prepare("INSERT OR IGNORE INTO seen_pages (id) VALUES (?1)")?;
+            for id in seen_page_ids {
+                stmt.execute([id])?;
+            }
+            let mut stmt = tx.prepare("INSERT OR IGNORE INTO seen_ds (id) VALUES (?1)")?;
+            for id in seen_ds_ids {
+                stmt.execute([id])?;
+            }
+        }
+        // Block-level ops (update_block/append_block/reorder_block) leave their block
+        // row in place, so it can be joined against directly. `delete_block` is the one
+        // exception — it removes the block row *before* enqueuing the op — but every
+        // block-op payload (including delete_block's) carries "page_id" as a JSON field,
+        // so a `json_extract` fallback on the payload catches that case too.
+        let removed_pages = tx.execute(
+            "DELETE FROM pages
+             WHERE id NOT IN (SELECT id FROM seen_pages)
+               AND NOT EXISTS (SELECT 1 FROM pending_ops WHERE target_id = pages.id)
+               AND NOT EXISTS (
+                     SELECT 1 FROM pending_ops po
+                     LEFT JOIN blocks b ON b.id = po.target_id
+                     WHERE COALESCE(b.page_id, json_extract(po.payload, '$.page_id')) = pages.id
+                   )",
+            [],
+        )? as u32;
+        let removed_ds = tx.execute(
+            "DELETE FROM data_sources
+             WHERE id NOT IN (SELECT id FROM seen_ds)
+               AND NOT EXISTS (SELECT 1 FROM pending_ops WHERE target_id = data_sources.id)
+               AND NOT EXISTS (
+                     SELECT 1 FROM pending_ops po
+                     JOIN rows r ON r.id = po.target_id
+                     WHERE r.data_source_id = data_sources.id
+                   )",
+            [],
+        )? as u32;
+        tx.execute(
+            "DELETE FROM blocks WHERE page_id NOT IN (SELECT id FROM pages)",
+            [],
+        )?;
+        tx.execute(
+            "DELETE FROM rows WHERE data_source_id NOT IN (SELECT id FROM data_sources)",
+            [],
+        )?;
+        tx.commit()?;
+        Ok((removed_pages, removed_ds))
+    }
+
+    /// Forgets a page the server says is gone (404/archived). Guarded the same
+    /// way `prune_missing` guards its page deletes: a page with any pending op
+    /// (direct or block-level) is NOT forgotten, since a false-positive liveness
+    /// check must never destroy unpushed edits. Returns `true` if the page was
+    /// actually deleted, `false` if it was skipped because pending ops exist.
+    pub fn forget_page(&mut self, page_id: &str) -> anyhow::Result<bool> {
+        let tx = self.conn.transaction()?;
+        let has_pending: i64 = tx.query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM pending_ops WHERE target_id = ?1
+                 UNION
+                 SELECT 1 FROM pending_ops po
+                 LEFT JOIN blocks b ON b.id = po.target_id
+                 WHERE COALESCE(b.page_id, json_extract(po.payload, '$.page_id')) = ?1
+             )",
+            [page_id],
+            |r| r.get(0),
+        )?;
+        if has_pending != 0 {
+            return Ok(false);
+        }
+        tx.execute("DELETE FROM blocks WHERE page_id = ?1", [page_id])?;
+        tx.execute("DELETE FROM pages WHERE id = ?1", [page_id])?;
+        tx.commit()?;
+        Ok(true)
+    }
+
     pub fn enqueue_op(
         &self,
         op_type: &str,
@@ -460,6 +583,56 @@ impl Store {
                 block_id: block_id.to_string(),
                 old_payload,
                 old_plain_text,
+            },
+        })
+    }
+
+    pub fn edit_rename_page(&mut self, page_id: &str, new_title: &str) -> anyhow::Result<EditReceipt> {
+        let old_title: String =
+            self.conn
+                .query_row("SELECT title FROM pages WHERE id = ?1", [page_id], |r| r.get(0))?;
+        let base: String = self.conn.query_row(
+            "SELECT last_edited_time FROM pages WHERE id = ?1",
+            [page_id],
+            |r| r.get(0),
+        )?;
+        self.conn.execute(
+            "UPDATE pages SET title = ?2, dirty = 1 WHERE id = ?1",
+            rusqlite::params![page_id, new_title],
+        )?;
+
+        let op_payload = json!({"title": new_title}).to_string();
+        let op_seq = self.enqueue_op("rename_page", page_id, &op_payload, Some(&base))?;
+
+        Ok(EditReceipt {
+            op_seq,
+            inverse: Inverse::RenamePage {
+                page_id: page_id.to_string(),
+                old_title,
+            },
+        })
+    }
+
+    pub fn edit_move_page(&mut self, page_id: &str, new_parent_id: &str) -> anyhow::Result<EditReceipt> {
+        let (old_parent_type, old_parent_id, base): (String, Option<String>, String) = self.conn.query_row(
+            "SELECT parent_type, parent_id, last_edited_time FROM pages WHERE id = ?1",
+            [page_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        self.conn.execute(
+            "UPDATE pages SET parent_type = 'page_id', parent_id = ?2, dirty = 1 WHERE id = ?1",
+            rusqlite::params![page_id, new_parent_id],
+        )?;
+
+        let op_payload = json!({"new_parent_id": new_parent_id}).to_string();
+        let op_seq = self.enqueue_op("move_page", page_id, &op_payload, Some(&base))?;
+
+        Ok(EditReceipt {
+            op_seq,
+            inverse: Inverse::MovePage {
+                page_id: page_id.to_string(),
+                old_parent_type,
+                old_parent_id,
             },
         })
     }
@@ -880,6 +1053,22 @@ impl Store {
                 self.conn
                     .execute("UPDATE rows SET archived = 0 WHERE id = ?1", [row_id])?;
             }
+            Inverse::RenamePage { page_id, old_title } => {
+                self.conn.execute(
+                    "UPDATE pages SET title = ?2 WHERE id = ?1",
+                    rusqlite::params![page_id, old_title],
+                )?;
+            }
+            Inverse::MovePage {
+                page_id,
+                old_parent_type,
+                old_parent_id,
+            } => {
+                self.conn.execute(
+                    "UPDATE pages SET parent_type = ?2, parent_id = ?3 WHERE id = ?1",
+                    rusqlite::params![page_id, old_parent_type, old_parent_id],
+                )?;
+            }
         }
         Ok(())
     }
@@ -1057,6 +1246,21 @@ impl Store {
                 )?;
                 self.enqueue_op("restore_row", row_id, "{}", Some(&base))?;
             }
+            Inverse::RenamePage { page_id, old_title } => {
+                self.edit_rename_page(page_id, old_title)?;
+            }
+            Inverse::MovePage {
+                page_id,
+                old_parent_id,
+                ..
+            } => {
+                // Undo-as-new-edit only re-moves when there's a concrete prior
+                // page parent; restoring a workspace-root parent isn't
+                // representable as a `move_page` op (YAGNI for v1).
+                if let Some(parent) = old_parent_id {
+                    self.edit_move_page(page_id, parent)?;
+                }
+            }
         }
         Ok(())
     }
@@ -1174,6 +1378,15 @@ pub enum Inverse {
     },
     RestoreRow {
         row_id: String,
+    },
+    RenamePage {
+        page_id: String,
+        old_title: String,
+    },
+    MovePage {
+        page_id: String,
+        old_parent_type: String,
+        old_parent_id: Option<String>,
     },
 }
 

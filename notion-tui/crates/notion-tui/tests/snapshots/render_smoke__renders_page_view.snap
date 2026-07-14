@@ -1,6 +1,6 @@
 ---
 source: crates/notion-tui/tests/render_smoke.rs
-assertion_line: 86
+assertion_line: 117
 expression: term.backend()
 ---
 "┌ notion ──────────────────┐┌ Roadmap ─────────────────────┐"
@@ -14,4 +14,4 @@ expression: term.backend()
 "│                          ││                              │"
 "│                          ││                              │"
 "└──────────────────────────┘└──────────────────────────────┘"
-"✓ synced                                                    "
+"workspace → Roadmap · ✓ synced                              "

@@ -4,11 +4,12 @@ use std::time::Duration;
 use crossterm::event::{KeyCode, KeyEvent};
 use notion_api::NotionClient;
 use notion_store::Store;
-use notion_sync::{pull_once, push_once};
+use notion_sync::{pull_once, push_once, SyncStatus};
 use notion_tui::app::{dispatch_key, App};
 use notion_tui::ui;
 use ratatui::{backend::TestBackend, Terminal};
 use serde_json::json;
+use tokio::sync::watch;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -61,7 +62,8 @@ async fn crawl_edit_queue_push_smoke() {
     client.set_timing(Duration::from_millis(1), Duration::from_millis(1));
 
     // 1. Crawl (read-only sync, as in M1).
-    pull_once(&client, &store).await.unwrap();
+    let (status_tx, _status_rx) = watch::channel(SyncStatus::Starting);
+    pull_once(&client, &store, &status_tx).await.unwrap();
 
     // 2. Open the page in the TUI, exactly as a user browsing would.
     let mut app = App::new(store.clone());

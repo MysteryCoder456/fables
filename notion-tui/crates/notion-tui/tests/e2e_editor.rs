@@ -3,9 +3,10 @@ use std::time::Duration;
 
 use notion_api::NotionClient;
 use notion_store::Store;
-use notion_sync::pull_once;
+use notion_sync::{pull_once, SyncStatus};
 use notion_tui::app::App;
 use serde_json::json;
+use tokio::sync::watch;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -40,7 +41,8 @@ async fn crawl_then_editor_round_trip_updates_and_inserts_blocks() {
     let store = Arc::new(Mutex::new(Store::open_in_memory().unwrap()));
     let mut client = NotionClient::with_base_url("t", server.uri());
     client.set_timing(Duration::from_millis(1), Duration::from_millis(1));
-    pull_once(&client, &store).await.unwrap();
+    let (status_tx, _status_rx) = watch::channel(SyncStatus::Starting);
+    pull_once(&client, &store, &status_tx).await.unwrap();
 
     let mut app = App::new(store.clone());
     app.refresh_sidebar();

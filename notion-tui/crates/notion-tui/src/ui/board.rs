@@ -16,6 +16,10 @@ pub struct BoardView {
     pub col: usize,
     pub card: usize,
     pub list_state: ListState,
+    /// User-chosen grouping property (via the "group by" palette command),
+    /// carried across `refresh_current_view` rebuilds so a sync tick doesn't
+    /// silently revert to the first-status/first-select heuristic.
+    pub group_override: Option<(String, String)>,
 }
 
 /// Picks the grouping property: first `status`, else first `select`, in schema
@@ -33,8 +37,18 @@ pub fn group_property(schema_json: &str) -> Option<(String, String)> {
 
 impl BoardView {
     pub fn new(ds: DataSourceRec, rows: Vec<RowRec>) -> BoardView {
-        let (group_prop, group_type) =
-            group_property(&ds.schema_json).unwrap_or_else(|| ("".into(), "".into()));
+        Self::with_group(ds, rows, None)
+    }
+
+    pub fn with_group(
+        ds: DataSourceRec,
+        rows: Vec<RowRec>,
+        group_override: Option<(String, String)>,
+    ) -> BoardView {
+        let (group_prop, group_type) = group_override
+            .clone()
+            .or_else(|| group_property(&ds.schema_json))
+            .unwrap_or_else(|| ("".into(), "".into()));
         let mut columns = schema_options(&ds.schema_json, &group_prop, &group_type);
         columns.push("(none)".to_string());
         BoardView {
@@ -46,6 +60,7 @@ impl BoardView {
             col: 0,
             card: 0,
             list_state: ListState::default(),
+            group_override,
         }
     }
 
@@ -107,6 +122,22 @@ impl BoardView {
             self.columns[target].clone()
         };
         self.col = target;
+        Some((row_id, value))
+    }
+
+    /// Like `move_card` but targets an absolute column index (drag-drop),
+    /// rather than a signed delta (keyboard `J`/`K`).
+    pub fn move_card_to(&mut self, target_col: usize) -> Option<(String, String)> {
+        let row_id = self.selected_row_id()?;
+        if target_col >= self.columns.len() || target_col == self.col {
+            return None;
+        }
+        let value = if self.columns[target_col] == "(none)" {
+            String::new()
+        } else {
+            self.columns[target_col].clone()
+        };
+        self.col = target_col;
         Some((row_id, value))
     }
 }
@@ -220,6 +251,19 @@ mod tests {
     }
 
     #[test]
+    fn move_card_to_targets_an_absolute_column() {
+        let mut v = BoardView::new(ds(), vec![row("r1", "A", Some("Todo"))]);
+        v.col = 0;
+        v.card = 0;
+        assert_eq!(v.move_card_to(2), Some(("r1".to_string(), "Done".to_string())));
+        assert_eq!(
+            v.move_card_to(0),
+            None,
+            "already moved to col 2 above — same target is a no-op"
+        );
+    }
+
+    #[test]
     fn no_groupable_property_means_no_board() {
         let plain = DataSourceRec {
             id: "ds".into(),
@@ -229,5 +273,25 @@ mod tests {
             last_edited_time: "t".into(),
         };
         assert!(group_property(&plain.schema_json).is_none());
+    }
+
+    #[test]
+    fn with_group_override_beats_the_first_status_heuristic() {
+        let schema = json!({
+            "Name": {"type": "title"},
+            "Status": {"type": "status", "status": {"options": [{"name": "Todo"}, {"name": "Done"}]}},
+            "Priority": {"type": "select", "select": {"options": [{"name": "Low"}, {"name": "High"}]}}
+        })
+        .to_string();
+        let ds = DataSourceRec {
+            id: "ds".into(),
+            database_id: "db".into(),
+            title: "T".into(),
+            schema_json: schema,
+            last_edited_time: "t".into(),
+        };
+        let v = BoardView::with_group(ds, vec![], Some(("Priority".to_string(), "select".to_string())));
+        assert_eq!(v.group_prop, "Priority");
+        assert_eq!(v.columns, vec!["Low", "High", "(none)"]);
     }
 }

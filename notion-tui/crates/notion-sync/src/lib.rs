@@ -36,7 +36,7 @@ impl From<ApiError> for SyncError {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SyncStatus {
     Starting,
-    Syncing { done: u32 },
+    Syncing { done: u32, total: u32 },
     Idle { updated: u32 },
     Offline,
     Failed(String),
@@ -46,9 +46,17 @@ pub struct SyncHandle {
     pub status: watch::Receiver<SyncStatus>,
     pub data_version: watch::Receiver<u64>,
     pub pending: watch::Receiver<u32>,
+    pub notify: std::sync::Arc<tokio::sync::Notify>,
 }
 
-pub use puller::pull_once;
+impl SyncHandle {
+    /// Wakes the sync loop immediately instead of waiting out its poll interval.
+    pub fn request_sync_now(&self) {
+        self.notify.notify_one();
+    }
+}
+
+pub use puller::{pull_once, reconcile_deletions};
 pub use pusher::push_once;
 
 /// Locks the shared store, recovering from mutex poisoning rather than propagating a panic.
@@ -63,14 +71,22 @@ pub(crate) fn lock_store(store: &SharedStore) -> std::sync::MutexGuard<'_, notio
 /// Extracted from `spawn_sync`'s loop so the whole cycle can be wrapped in `catch_unwind`:
 /// `watch::Sender` is not `Clone`, so the senders are threaded through by reference rather than
 /// captured by a separately-spawned task per cycle.
+/// How often (in sync cycles) a full-workspace reconciliation crawl runs to catch
+/// remote deletions that a checkpointed/hwm-filtered `pull_once` would never see
+/// (a deleted page simply stops appearing in search results, rather than showing
+/// up with a newer `last_edited_time`). `cycle_count % N == 0` is true on the very
+/// first cycle too, so reconciliation also runs once immediately on startup.
+const RECONCILE_EVERY_N_CYCLES: u32 = 20;
+
 async fn one_cycle(
     client: &Arc<NotionClient>,
     store: &SharedStore,
     status_tx: &watch::Sender<SyncStatus>,
     data_tx: &watch::Sender<u64>,
     pending_tx: &watch::Sender<u32>,
+    cycle_count: u32,
 ) {
-    status_tx.send_replace(SyncStatus::Syncing { done: 0 });
+    status_tx.send_replace(SyncStatus::Syncing { done: 0, total: 0 });
 
     match push_once(client, store).await {
         Ok(_) => {}
@@ -83,12 +99,19 @@ async fn one_cycle(
     };
     pending_tx.send_replace(lock_store(store).pending_count().unwrap_or(0));
 
-    match pull_once(client, store).await {
+    match pull_once(client, store, status_tx).await {
         Ok(updated) => {
             if updated > 0 {
                 data_tx.send_modify(|v| *v += 1);
             }
             status_tx.send_replace(SyncStatus::Idle { updated });
+            if cycle_count.is_multiple_of(RECONCILE_EVERY_N_CYCLES) {
+                if let Ok((removed_pages, removed_ds)) = reconcile_deletions(client, store).await {
+                    if removed_pages + removed_ds > 0 {
+                        data_tx.send_modify(|v| *v += 1);
+                    }
+                }
+            }
         }
         Err(SyncError::Api(ApiError::Network(_))) => {
             status_tx.send_replace(SyncStatus::Offline);
@@ -133,15 +156,18 @@ fn spawn_sync_inner(
     let (status_tx, status_rx) = watch::channel(SyncStatus::Starting);
     let (data_tx, data_rx) = watch::channel(0u64);
     let (pending_tx, pending_rx) = watch::channel(0u32);
+    let notify = std::sync::Arc::new(tokio::sync::Notify::new());
+    let notify_loop = notify.clone();
     tokio::spawn(async move {
         let client = Arc::new(client);
         let mut cycle_index: u64 = 0;
+        let mut cycle_count: u32 = 0;
         loop {
             let cycle = async {
                 if let Some(h) = &hook {
                     h(cycle_index);
                 }
-                one_cycle(&client, &store, &status_tx, &data_tx, &pending_tx).await
+                one_cycle(&client, &store, &status_tx, &data_tx, &pending_tx, cycle_count).await
             };
             if let Err(payload) = futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(cycle)).await
             {
@@ -151,12 +177,17 @@ fn spawn_sync_inner(
                 ));
             }
             cycle_index += 1;
-            tokio::time::sleep(interval).await;
+            cycle_count = cycle_count.wrapping_add(1);
+            tokio::select! {
+                _ = tokio::time::sleep(interval) => {}
+                _ = notify_loop.notified() => {}
+            }
         }
     });
     SyncHandle {
         status: status_rx,
         data_version: data_rx,
         pending: pending_rx,
+        notify,
     }
 }

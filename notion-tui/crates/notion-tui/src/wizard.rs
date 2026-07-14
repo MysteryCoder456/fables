@@ -25,6 +25,11 @@ pub fn run_with(
         match validate(&token) {
             Some(name) => {
                 writeln!(output, "ok — connected as \"{name}\"")?;
+                writeln!(
+                    output,
+                    "starting first sync now — large workspaces show progress in the status bar \
+                     and can take a few minutes."
+                )?;
                 return Ok(token);
             }
             None => {
@@ -75,6 +80,7 @@ mod tests {
         assert_eq!(token, "secret_good");
         let printed = String::from_utf8(output).unwrap();
         assert!(printed.contains("My Bot"));
+        assert!(printed.contains("starting first sync"));
     }
 
     #[test]

@@ -236,3 +236,75 @@ async fn push_delete_row_archives_remote_and_clears_dirty() {
     assert!(store.lock().unwrap().ops().unwrap().is_empty());
     assert!(!store.lock().unwrap().is_row_dirty("r1").unwrap());
 }
+
+#[tokio::test]
+async fn push_once_sends_a_rename_page_op() {
+    let mut s = Store::open_in_memory().unwrap();
+    s.upsert_page(&PageRec {
+        id: "p1".into(),
+        parent_type: "workspace".into(),
+        parent_id: None,
+        title: "Old".into(),
+        icon: None,
+        archived: false,
+        last_edited_time: "2026-07-05T10:00:00.000Z".into(),
+    })
+    .unwrap();
+    s.edit_rename_page("p1", "New").unwrap();
+    let store: SharedStore = Arc::new(Mutex::new(s));
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/pages/p1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "object": "page", "id": "p1", "last_edited_time": "2026-07-05T10:00:00.000Z"
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/v1/pages/p1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "p1"})))
+        .mount(&server)
+        .await;
+
+    let client = fast_client(server.uri());
+    let pushed = push_once(&client, &store).await.unwrap();
+    assert_eq!(pushed, 1);
+    assert!(store.lock().unwrap().ops().unwrap().is_empty());
+    assert!(!store.lock().unwrap().is_page_dirty("p1").unwrap());
+}
+
+#[tokio::test]
+async fn push_once_sends_a_move_page_op() {
+    let mut s = Store::open_in_memory().unwrap();
+    s.upsert_page(&PageRec {
+        id: "p1".into(),
+        parent_type: "workspace".into(),
+        parent_id: None,
+        title: "T".into(),
+        icon: None,
+        archived: false,
+        last_edited_time: "2026-07-05T10:00:00.000Z".into(),
+    })
+    .unwrap();
+    s.edit_move_page("p1", "p2").unwrap();
+    let store: SharedStore = Arc::new(Mutex::new(s));
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/pages/p1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "object": "page", "id": "p1", "last_edited_time": "2026-07-05T10:00:00.000Z"
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/v1/pages/p1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "p1"})))
+        .mount(&server)
+        .await;
+
+    let pushed = push_once(&fast_client(server.uri()), &store).await.unwrap();
+    assert_eq!(pushed, 1);
+    assert!(store.lock().unwrap().ops().unwrap().is_empty());
+}

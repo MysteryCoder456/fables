@@ -1,7 +1,8 @@
 use notion_api::{NotionClient, ParentRef, SearchItem};
 use notion_store::{BlockRec, DataSourceRec, PageRec, RowRec};
+use tokio::sync::watch;
 
-use crate::{lock_store, SharedStore, SyncError};
+use crate::{lock_store, SharedStore, SyncError, SyncStatus};
 
 fn parent_cols(p: &ParentRef) -> (String, Option<String>) {
     match p {
@@ -14,18 +15,34 @@ fn parent_cols(p: &ParentRef) -> (String, Option<String>) {
     }
 }
 
-pub async fn pull_once(client: &NotionClient, store: &SharedStore) -> Result<u32, SyncError> {
+pub async fn pull_once(
+    client: &NotionClient,
+    store: &SharedStore,
+    status_tx: &watch::Sender<SyncStatus>,
+) -> Result<u32, SyncError> {
     let hwm = lock_store(store)
         .meta_get("hwm")
         .map_err(|e| SyncError::Store(e.to_string()))?
         .unwrap_or_default();
-    let mut max_seen = hwm.clone();
+    let mut cursor = lock_store(store)
+        .meta_get("pull_cursor")
+        .map_err(|e| SyncError::Store(e.to_string()))?
+        .filter(|c| !c.is_empty());
+    let mut max_seen = lock_store(store)
+        .meta_get("pull_max_seen")
+        .map_err(|e| SyncError::Store(e.to_string()))?
+        .unwrap_or_else(|| hwm.clone());
+    let mut done_count: u32 = lock_store(store)
+        .meta_get("pull_done")
+        .map_err(|e| SyncError::Store(e.to_string()))?
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
     let mut updated: u32 = 0;
-    let mut cursor: Option<String> = None;
-    let mut done = false;
+    let mut finished = false;
 
-    while !done {
+    while !finished {
         let page = client.search_page(cursor.as_deref()).await?;
+        let has_more = page.next_cursor.is_some();
         for item in &page.items {
             let edited = match item {
                 SearchItem::Page(p) => p.last_edited_time.clone(),
@@ -33,7 +50,7 @@ pub async fn pull_once(client: &NotionClient, store: &SharedStore) -> Result<u32
                 SearchItem::Other => continue,
             };
             if !hwm.is_empty() && edited.as_str() <= hwm.as_str() {
-                done = true;
+                finished = true;
                 break;
             }
             if edited > max_seen {
@@ -121,10 +138,25 @@ pub async fn pull_once(client: &NotionClient, store: &SharedStore) -> Result<u32
                 }
                 SearchItem::Other => {}
             }
+            done_count += 1;
+            let total_estimate = (done_count + if has_more { 100 } else { 0 }).max(done_count);
+            status_tx.send_replace(SyncStatus::Syncing {
+                done: done_count,
+                total: total_estimate,
+            });
         }
         cursor = page.next_cursor.clone();
+        lock_store(store)
+            .meta_set("pull_cursor", cursor.as_deref().unwrap_or(""))
+            .map_err(|e| SyncError::Store(e.to_string()))?;
+        lock_store(store)
+            .meta_set("pull_done", &done_count.to_string())
+            .map_err(|e| SyncError::Store(e.to_string()))?;
+        lock_store(store)
+            .meta_set("pull_max_seen", &max_seen)
+            .map_err(|e| SyncError::Store(e.to_string()))?;
         if cursor.is_none() {
-            done = true;
+            finished = true;
         }
     }
 
@@ -133,5 +165,44 @@ pub async fn pull_once(client: &NotionClient, store: &SharedStore) -> Result<u32
             .meta_set("hwm", &max_seen)
             .map_err(|e| SyncError::Store(e.to_string()))?;
     }
+    lock_store(store)
+        .meta_delete("pull_cursor")
+        .map_err(|e| SyncError::Store(e.to_string()))?;
+    lock_store(store)
+        .meta_delete("pull_max_seen")
+        .map_err(|e| SyncError::Store(e.to_string()))?;
+    lock_store(store)
+        .meta_delete("pull_done")
+        .map_err(|e| SyncError::Store(e.to_string()))?;
     Ok(updated)
+}
+
+/// A full, unfiltered workspace crawl (no hwm cutoff) used purely to build
+/// the "seen" set for `Store::prune_missing`. Runs far less often than
+/// `pull_once` (see `spawn_sync`'s cycle counter) since it always pages
+/// through the entire workspace.
+pub async fn reconcile_deletions(
+    client: &NotionClient,
+    store: &SharedStore,
+) -> Result<(u32, u32), SyncError> {
+    let mut seen_pages = Vec::new();
+    let mut seen_ds = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let page = client.search_page(cursor.as_deref()).await?;
+        for item in &page.items {
+            match item {
+                SearchItem::Page(p) => seen_pages.push(p.id.clone()),
+                SearchItem::DataSource(d) => seen_ds.push(d.id.clone()),
+                SearchItem::Other => {}
+            }
+        }
+        cursor = page.next_cursor.clone();
+        if cursor.is_none() {
+            break;
+        }
+    }
+    lock_store(store)
+        .prune_missing(&seen_pages, &seen_ds)
+        .map_err(|e| SyncError::Store(e.to_string()))
 }
