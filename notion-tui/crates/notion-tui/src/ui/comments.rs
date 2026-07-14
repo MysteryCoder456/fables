@@ -48,6 +48,19 @@ impl CommentsState {
 }
 
 pub fn render(f: &mut Frame, area: Rect, state: &mut CommentsState, theme: &Theme) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme.border)
+        .title(Span::styled(" comments (n new · r reply) ", theme.title));
+    if state.items.is_empty() {
+        f.render_widget(
+            ratatui::widgets::Paragraph::new("no comments yet — press n")
+                .style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::DIM))
+                .block(block),
+            area,
+        );
+        return;
+    }
     let items: Vec<ListItem> = state
         .items
         .iter()
@@ -55,12 +68,7 @@ pub fn render(f: &mut Frame, area: Rect, state: &mut CommentsState, theme: &Them
         .collect();
     state.list_state.select(Some(state.cursor));
     f.render_stateful_widget(
-        List::new(items).highlight_style(theme.highlight).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(theme.border)
-                .title(Span::styled(" comments (n new · r reply) ", theme.title)),
-        ),
+        List::new(items).highlight_style(theme.highlight).block(block),
         area,
         &mut state.list_state,
     );

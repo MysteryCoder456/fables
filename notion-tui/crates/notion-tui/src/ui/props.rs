@@ -1,12 +1,13 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use notion_store::RowRec;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{Clear, List, ListItem, Paragraph};
 use ratatui::Frame;
 use serde_json::{json, Value};
 
 use crate::ui::table::{cell_text, schema_columns, schema_options};
+use crate::ui::textline::{TextLine, TextLineEvent};
+use crate::ui::theme::{popup_block, Theme};
 
 pub struct PropField {
     pub name: String,
@@ -20,7 +21,7 @@ pub struct PropField {
 /// type (including select/status without options) falls back to Text.
 pub enum Editor {
     Text {
-        buffer: String,
+        buffer: TextLine,
         error: Option<String>,
     },
     /// `options[0]` is always the synthetic "(clear)" entry.
@@ -102,9 +103,9 @@ impl PropsState {
                     }
                     KeyCode::Enter => {
                         let field = &self.fields[self.cursor];
-                        match validate_input(&field.prop_type, buffer) {
+                        match validate_input(&field.prop_type, buffer.text()) {
                             Ok(()) => {
-                                let text = buffer.clone();
+                                let text = buffer.text().to_string();
                                 let prop_name = field.name.clone();
                                 let prop_type = field.prop_type.clone();
                                 self.editor = None;
@@ -120,17 +121,12 @@ impl PropsState {
                             }
                         }
                     }
-                    KeyCode::Backspace => {
-                        buffer.pop();
-                        *error = None;
+                    _ => {
+                        if matches!(buffer.on_key(key), TextLineEvent::Edited) {
+                            *error = None;
+                        }
                         PropsAction::None
                     }
-                    KeyCode::Char(c) => {
-                        buffer.push(c);
-                        *error = None;
-                        PropsAction::None
-                    }
-                    _ => PropsAction::None,
                 },
                 Editor::Select { options, cursor } => match key.code {
                     KeyCode::Esc => {
@@ -259,7 +255,7 @@ impl PropsState {
                                 Editor::Select { options, cursor }
                             } else {
                                 Editor::Text {
-                                    buffer: field.value_text.clone(),
+                                    buffer: TextLine::new(field.value_text.clone()),
                                     error: None,
                                 }
                             },
@@ -407,7 +403,7 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     Rect { x, y, width, height }
 }
 
-pub fn render(f: &mut Frame, state: &PropsState) {
+pub fn render(f: &mut Frame, state: &PropsState, theme: &Theme) {
     let area = f.area();
     let popup_width = (area.width * 3 / 4).clamp(30, 70);
     let popup_height = (area.height * 3 / 4).clamp(6, 20);
@@ -419,17 +415,17 @@ pub fn render(f: &mut Frame, state: &PropsState) {
         match editor {
             Editor::Text { buffer, error } => {
                 let text = match error {
-                    Some(msg) => format!("{buffer}\n✗ {msg}"),
-                    None => buffer.clone(),
+                    Some(msg) => format!("{}\n✗ {msg}", buffer.text()),
+                    None => buffer.text().to_string(),
                 };
                 f.render_widget(
-                    Paragraph::new(text).block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title(format!(" {} ", field.name)),
-                    ),
+                    Paragraph::new(text).block(popup_block(format!(" {} ", field.name), theme)),
                     popup,
                 );
+                f.set_cursor_position(ratatui::layout::Position::new(
+                    popup.x + 1 + buffer.cursor_cols().min(popup.width.saturating_sub(2)),
+                    popup.y + 1,
+                ));
             }
             Editor::Select { options, cursor } => {
                 let items: Vec<ListItem> = options
@@ -438,17 +434,16 @@ pub fn render(f: &mut Frame, state: &PropsState) {
                     .map(|(i, o)| {
                         let mut item = ListItem::new(o.as_str());
                         if i == *cursor {
-                            item = item.style(Style::default().add_modifier(Modifier::REVERSED));
+                            item = item.style(theme.highlight);
                         }
                         item
                     })
                     .collect();
                 f.render_widget(
-                    List::new(items).block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title(format!(" {} (enter select · esc cancel) ", field.name)),
-                    ),
+                    List::new(items).block(popup_block(
+                        format!(" {} (enter select · esc cancel) ", field.name),
+                        theme,
+                    )),
                     popup,
                 );
             }
@@ -465,16 +460,16 @@ pub fn render(f: &mut Frame, state: &PropsState) {
                         let mark = if *c { "[x]" } else { "[ ]" };
                         let mut item = ListItem::new(format!("{mark} {o}"));
                         if i == *cursor {
-                            item = item.style(Style::default().add_modifier(Modifier::REVERSED));
+                            item = item.style(theme.highlight);
                         }
                         item
                     })
                     .collect();
                 f.render_widget(
-                    List::new(items).block(Block::default().borders(Borders::ALL).title(format!(
-                        " {} (space toggle · enter commit · esc cancel) ",
-                        field.name
-                    ))),
+                    List::new(items).block(popup_block(
+                        format!(" {} (space toggle · enter commit · esc cancel) ", field.name),
+                        theme,
+                    )),
                     popup,
                 );
             }
@@ -489,7 +484,7 @@ pub fn render(f: &mut Frame, state: &PropsState) {
         .map(|(i, field)| {
             let mut item = ListItem::new(format!("{}: {}", field.name, field.value_text));
             if i == state.cursor {
-                item = item.style(Style::default().add_modifier(Modifier::REVERSED));
+                item = item.style(theme.highlight);
             }
             item
         })
@@ -498,7 +493,7 @@ pub fn render(f: &mut Frame, state: &PropsState) {
         items.push(ListItem::new(format!("({notice})")));
     }
     f.render_widget(
-        List::new(items).block(Block::default().borders(Borders::ALL).title(" properties ")),
+        List::new(items).block(popup_block(" properties ".to_string(), theme)),
         popup,
     );
 }

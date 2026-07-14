@@ -27,7 +27,12 @@ async fn main() -> anyhow::Result<()> {
     app.sync_notify = Some(handle.notify.clone());
     app.mouse = cfg.mouse;
     app.editor_override = cfg.editor.clone();
-    app.keymap = notion_tui::keymap::Keymap::with_overrides(&cfg.keys);
+    let (keymap, key_warnings) = notion_tui::keymap::Keymap::with_overrides_checked(&cfg.keys);
+    app.keymap = keymap;
+    let startup_warnings: Vec<String> = cfg.warnings.iter().cloned().chain(key_warnings).collect();
+    if !startup_warnings.is_empty() {
+        app.notice = Some(startup_warnings.join(" · "));
+    }
     app.theme = notion_tui::ui::theme::named(&cfg.theme);
     app.refresh_sidebar();
     let mut events = EventStream::new();

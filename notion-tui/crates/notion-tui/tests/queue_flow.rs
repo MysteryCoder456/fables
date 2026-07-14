@@ -94,3 +94,28 @@ fn take_theirs_from_queue_deletes_op() {
     assert!(store.lock().unwrap().ops().unwrap().is_empty());
     assert!(!store.lock().unwrap().is_page_dirty("p1").unwrap());
 }
+
+#[test]
+fn queue_rows_show_titles_not_uuids() {
+    use notion_tui::ui;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    let (store, _) = store_with_conflicted_op();
+    let mut app = App::new(store);
+    app.focus = Focus::Main;
+    dispatch_key(&mut app, shift_q());
+    let backend = TestBackend::new(80, 12);
+    let mut term = Terminal::new(backend).unwrap();
+    term.draw(|f| ui::draw(f, &mut app)).unwrap();
+    let content: String = term
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|c| c.symbol())
+        .collect();
+    assert!(
+        content.contains("edit ¶ in 'P'"),
+        "queue row not humanized:\n{content}"
+    );
+}

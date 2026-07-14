@@ -1,7 +1,9 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 use ratatui::Frame;
+
+use crate::ui::theme::Theme;
 
 pub struct ConfirmState {
     pub message: String,
@@ -16,6 +18,10 @@ pub enum ConfirmKind {
     /// Apply an edited document whose parse produced warnings (e.g. an
     /// unclosed code fence swallowing the rest of the page).
     ApplyDespiteWarnings,
+    /// `dd` on a block in the page view.
+    DeleteBlock,
+    /// `dd` on a row in table/board views.
+    DeleteRow,
 }
 
 pub enum ConfirmAction {
@@ -42,13 +48,13 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     Rect { x, y, width, height }
 }
 
-pub fn render(f: &mut Frame, state: &ConfirmState) {
+pub fn render(f: &mut Frame, state: &ConfirmState, theme: &Theme) {
     let area = f.area();
     let popup = centered_rect((area.width * 2 / 3).clamp(30, 70), 5, area);
     f.render_widget(Clear, popup);
     f.render_widget(
         Paragraph::new(format!("{}\n(y/n)", state.message))
-            .block(Block::default().borders(Borders::ALL).title(" confirm ")),
+            .block(crate::ui::theme::popup_block(" confirm ".to_string(), theme)),
         popup,
     );
 }

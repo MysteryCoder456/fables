@@ -1,12 +1,14 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use notion_store::SearchHit;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
+use crate::ui::textline::TextLine;
+use crate::ui::theme::Theme;
+
 pub struct SearchState {
-    pub input: String,
+    pub input: TextLine,
     pub results: Vec<SearchHit>,
     pub cursor: usize,
     pub list_state: ListState,
@@ -23,7 +25,7 @@ pub enum SearchAction {
 impl SearchState {
     pub fn new() -> SearchState {
         SearchState {
-            input: String::new(),
+            input: TextLine::new(""),
             results: Vec::new(),
             cursor: 0,
             list_state: ListState::default(),
@@ -39,10 +41,6 @@ impl SearchState {
                 Some(hit) => SearchAction::Open(hit.page_id.clone()),
                 None => SearchAction::None,
             },
-            KeyCode::Backspace => {
-                self.input.pop();
-                SearchAction::QueryChanged
-            }
             KeyCode::Down => {
                 if !self.results.is_empty() {
                     self.cursor = (self.cursor + 1).min(self.results.len() - 1);
@@ -53,11 +51,10 @@ impl SearchState {
                 self.cursor = self.cursor.saturating_sub(1);
                 SearchAction::None
             }
-            KeyCode::Char(c) => {
-                self.input.push(c);
-                SearchAction::QueryChanged
-            }
-            _ => SearchAction::None,
+            _ => match self.input.on_key(key) {
+                crate::ui::textline::TextLineEvent::Edited => SearchAction::QueryChanged,
+                _ => SearchAction::None,
+            },
         }
     }
 }
@@ -76,7 +73,7 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     Rect { x, y, width, height }
 }
 
-pub fn render(f: &mut Frame, state: &mut SearchState) {
+pub fn render(f: &mut Frame, state: &mut SearchState, theme: &Theme) {
     let area = f.area();
     let popup_width = (area.width * 3 / 4).clamp(20, 80);
     let popup_height = (area.height * 3 / 4).clamp(6, 20);
@@ -89,23 +86,36 @@ pub fn render(f: &mut Frame, state: &mut SearchState) {
         .split(popup);
 
     f.render_widget(
-        Paragraph::new(state.input.as_str()).block(Block::default().borders(Borders::ALL).title(" search ")),
+        Paragraph::new(state.input.text()).block(crate::ui::theme::popup_block(" search ".into(), theme)),
         inner[0],
     );
+    f.set_cursor_position(ratatui::layout::Position::new(
+        inner[0].x + 1 + state.input.cursor_cols().min(inner[0].width.saturating_sub(2)),
+        inner[0].y + 1,
+    ));
 
-    let items: Vec<ListItem> = state
-        .results
-        .iter()
-        .map(|h| ListItem::new(format!("{}  {}", h.title, h.snippet)))
-        .collect();
-    state.list_state.select(Some(state.cursor));
-    f.render_stateful_widget(
-        List::new(items)
-            .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-            .block(Block::default().borders(Borders::ALL)),
-        inner[1],
-        &mut state.list_state,
-    );
+    if !state.input.text().is_empty() && state.results.is_empty() {
+        f.render_widget(
+            Paragraph::new("no results")
+                .style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::DIM))
+                .block(crate::ui::theme::popup_block(String::new(), theme)),
+            inner[1],
+        );
+    } else {
+        let items: Vec<ListItem> = state
+            .results
+            .iter()
+            .map(|h| ListItem::new(format!("{}  {}", h.title, h.snippet)))
+            .collect();
+        state.list_state.select(Some(state.cursor));
+        f.render_stateful_widget(
+            List::new(items)
+                .highlight_style(theme.highlight)
+                .block(crate::ui::theme::popup_block(String::new(), theme)),
+            inner[1],
+            &mut state.list_state,
+        );
+    }
 }
 
 #[cfg(test)]
@@ -119,12 +129,12 @@ mod tests {
             s.on_key(KeyEvent::from(KeyCode::Char('a'))),
             SearchAction::QueryChanged
         ));
-        assert_eq!(s.input, "a");
+        assert_eq!(s.input.text(), "a");
         assert!(matches!(
             s.on_key(KeyEvent::from(KeyCode::Backspace)),
             SearchAction::QueryChanged
         ));
-        assert_eq!(s.input, "");
+        assert_eq!(s.input.text(), "");
         assert!(matches!(
             s.on_key(KeyEvent::from(KeyCode::Esc)),
             SearchAction::Close

@@ -1,12 +1,13 @@
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem};
+use ratatui::widgets::{Clear, List, ListItem};
 use ratatui::Frame;
 
 use crate::keymap::Keymap;
+use crate::ui::theme::{popup_block, Theme};
 
-fn key_label(code: KeyCode) -> String {
-    match code {
+fn key_label((code, mods): (KeyCode, KeyModifiers)) -> String {
+    let base = match code {
         KeyCode::Char(' ') => "space".into(),
         KeyCode::Char(c) => c.to_string(),
         KeyCode::Enter => "enter".into(),
@@ -14,6 +15,11 @@ fn key_label(code: KeyCode) -> String {
         KeyCode::Tab => "tab".into(),
         KeyCode::Backspace => "backspace".into(),
         other => format!("{other:?}"),
+    };
+    if mods.contains(KeyModifiers::CONTROL) {
+        format!("ctrl+{base}")
+    } else {
+        base
     }
 }
 
@@ -43,27 +49,25 @@ pub fn board_hints(keymap: &Keymap) -> String {
         .join(" · ")
 }
 
-pub fn render(f: &mut Frame, keymap: &Keymap) {
+pub fn render(f: &mut Frame, keymap: &Keymap, theme: &Theme) {
     let area = f.area();
-    let popup = centered_rect(
-        (area.width * 3 / 4).clamp(40, 70),
-        (area.height * 3 / 4).clamp(10, 32),
-        area,
-    );
-    f.render_widget(Clear, popup);
-    let items: Vec<ListItem> = Keymap::actions()
+    let mut items: Vec<ListItem> = Keymap::actions()
         .iter()
         .map(|(action, desc)| {
             let key = keymap.key_for(action).map(key_label).unwrap_or_default();
             ListItem::new(format!("{key:>10}  {desc}"))
         })
         .collect();
+    items.push(ListItem::new(""));
+    items.push(ListItem::new("fixed keys (not rebindable):"));
+    for (key, desc) in crate::keymap::FIXED_KEYS_HELP {
+        items.push(ListItem::new(format!("{key:>10}  {desc}")));
+    }
+    let popup_height = (items.len() as u16 + 2).min(area.height).max(10);
+    let popup = centered_rect((area.width * 3 / 4).clamp(40, 70), popup_height, area);
+    f.render_widget(Clear, popup);
     f.render_widget(
-        List::new(items).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" help (any key to close) "),
-        ),
+        List::new(items).block(popup_block(" help (any key to close) ".to_string(), theme)),
         popup,
     );
 }

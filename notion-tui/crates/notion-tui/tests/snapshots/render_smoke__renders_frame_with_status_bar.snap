@@ -1,10 +1,10 @@
 ---
 source: crates/notion-tui/tests/render_smoke.rs
-assertion_line: 12
+assertion_line: 18
 expression: term.backend()
 ---
 "┌ notion ● ────────────────┐┌──────────────────────────────┐"
-"│                          ││                              │"
+"│first sync in progress…   ││                              │"
 "│                          ││                              │"
 "│                          ││                              │"
 "│                          ││                              │"

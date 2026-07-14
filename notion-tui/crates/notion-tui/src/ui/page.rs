@@ -125,6 +125,15 @@ impl PageView {
                 "paragraph" => (b.plain_text.clone(), None),
                 _ if b.block_type == "code" => {
                     let language = payload["language"].as_str().unwrap_or("").to_string();
+                    if !language.is_empty() {
+                        out.push(BlockLine {
+                            block_id: b.id.clone(),
+                            text: format!("╭─ {language}"),
+                            indent,
+                            link_page_id: None,
+                            spans: None,
+                        });
+                    }
                     for src_line in b.plain_text.lines() {
                         out.push(BlockLine {
                             block_id: b.id.clone(),
@@ -211,23 +220,63 @@ impl PageView {
     }
 }
 
+/// Greedy word-wrap: splits on spaces, never breaks a word, always returns at
+/// least one (possibly empty) segment. Width is in chars — close enough for
+/// prose; code lines bypass wrapping entirely.
+fn wrap_words(text: &str, width: usize) -> Vec<String> {
+    let mut lines = vec![String::new()];
+    for word in text.split(' ') {
+        let cur = lines.last_mut().unwrap();
+        if cur.is_empty() {
+            *cur = word.to_string();
+        } else if cur.chars().count() + 1 + word.chars().count() <= width {
+            cur.push(' ');
+            cur.push_str(word);
+        } else {
+            lines.push(word.to_string());
+        }
+    }
+    lines
+}
+
 pub fn render(f: &mut Frame, area: Rect, view: &mut PageView, focused: bool, theme: &Theme) {
-    let items: Vec<ListItem> = view
-        .lines()
+    let title = format!(" {} ", view.page.title);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme.border)
+        .title(Span::styled(title, theme.title));
+    let lines = view.lines();
+    if lines.is_empty() {
+        f.render_widget(
+            ratatui::widgets::Paragraph::new("empty page — press a to add a block")
+                .style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::DIM))
+                .block(block),
+            area,
+        );
+        return;
+    }
+    let wrap_width = area.width.saturating_sub(2) as usize; // borders
+    let items: Vec<ListItem> = lines
         .iter()
-        .map(|l| {
-            let content = match &l.spans {
-                Some(styled) => {
-                    let mut spans = vec![Span::raw(format!("{}│ ", "  ".repeat(l.indent)))];
-                    spans.extend(styled.spans.iter().cloned());
-                    Line::from(spans)
-                }
-                None => Line::from(format!("{}{}", "  ".repeat(l.indent), l.text)),
-            };
-            ListItem::new(content)
+        .map(|l| match &l.spans {
+            Some(styled) => {
+                let mut spans = vec![Span::raw(format!("{}│ ", "  ".repeat(l.indent)))];
+                spans.extend(styled.spans.iter().cloned());
+                ListItem::new(Line::from(spans))
+            }
+            None => {
+                let indent = "  ".repeat(l.indent);
+                let avail = wrap_width.saturating_sub(indent.chars().count()).max(10);
+                let text = ratatui::text::Text::from(
+                    wrap_words(&l.text, avail)
+                        .into_iter()
+                        .map(|seg| Line::from(format!("{indent}{seg}")))
+                        .collect::<Vec<Line>>(),
+                );
+                ListItem::new(text)
+            }
         })
         .collect();
-    let title = format!(" {} ", view.page.title);
     let highlight = if focused {
         theme.highlight
     } else {
@@ -235,12 +284,7 @@ pub fn render(f: &mut Frame, area: Rect, view: &mut PageView, focused: bool, the
     };
     view.list_state.select(Some(view.cursor));
     f.render_stateful_widget(
-        List::new(items).highlight_style(highlight).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(theme.border)
-                .title(Span::styled(title, theme.title)),
-        ),
+        List::new(items).highlight_style(highlight).block(block),
         area,
         &mut view.list_state,
     );
@@ -373,10 +417,64 @@ mod tests {
             )],
         );
         let lines = v.lines();
-        assert_eq!(lines.len(), 2);
-        assert!(lines[0].text.contains("let x = 1;"));
-        let spans = lines[0].spans.as_ref().expect("code lines carry styled spans");
+        assert_eq!(lines.len(), 3); // label + 2 code lines
+        assert_eq!(lines[0].text, "╭─ rust");
+        assert!(lines[1].text.contains("let x = 1;"));
+        let spans = lines[1].spans.as_ref().expect("code lines carry styled spans");
         assert!(spans.spans.iter().any(|s| s.style.fg.is_some()));
+    }
+
+    #[test]
+    fn code_block_gets_language_label_line() {
+        let v = PageView::new(
+            page(),
+            vec![rec("c", None, 0, "code", "let x = 1;", r#"{"language": "rust"}"#)],
+        );
+        let lines = v.lines();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].text, "╭─ rust");
+        assert!(lines[0].spans.is_none());
+        assert!(lines[1].text.contains("let x = 1;"));
+    }
+
+    #[test]
+    fn code_block_without_language_has_no_label() {
+        let v = PageView::new(page(), vec![rec("c", None, 0, "code", "plain", "{}")]);
+        assert_eq!(v.lines().len(), 1);
+        assert!(v.lines()[0].text.contains("plain"));
+    }
+
+    #[test]
+    fn wrap_words_splits_at_width() {
+        assert_eq!(wrap_words("aaa bbb ccc", 7), vec!["aaa bbb", "ccc"]);
+        assert_eq!(wrap_words("short", 10), vec!["short"]);
+        assert_eq!(wrap_words("", 10), vec![""]);
+    }
+
+    #[test]
+    fn render_soft_wraps_long_paragraphs() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let long = "alpha bravo charlie delta echo foxtrot golf hotel india juliet";
+        let mut v = PageView::new(page(), vec![rec("b", None, 0, "paragraph", long, "{}")]);
+        v.cursor = 0;
+        let theme = crate::ui::theme::named("default");
+        let backend = TestBackend::new(24, 12);
+        let mut term = Terminal::new(backend).unwrap();
+        term.draw(|f| render(f, f.area(), &mut v, true, &theme)).unwrap();
+        let content: String = term
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        // At 24 cols the tail words only appear if the line wrapped instead of clipping.
+        assert!(
+            content.contains("juliet"),
+            "tail of long line should wrap into view:\n{content}"
+        );
     }
 
     #[test]

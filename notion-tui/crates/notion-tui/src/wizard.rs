@@ -1,11 +1,20 @@
 use std::io::{BufRead, Write};
 
+/// Why a pasted token was not accepted — the wizard must not tell a user with
+/// a broken network that their token is wrong (spec M8.6).
+pub enum TokenError {
+    /// Notion answered and rejected the token (401/403) or returned no identity.
+    Invalid,
+    /// Notion could not be reached at all (connect/timeout/DNS or retries exhausted).
+    Network(String),
+}
+
 /// Testable core: prompts for a token until `validate` accepts one (returning
 /// the integration name), echoing progress to `output`. Returns the token.
 pub fn run_with(
     input: impl BufRead,
     mut output: impl Write,
-    mut validate: impl FnMut(&str) -> Option<String>,
+    mut validate: impl FnMut(&str) -> Result<String, TokenError>,
 ) -> anyhow::Result<String> {
     writeln!(output, "notion-tui first-run setup")?;
     writeln!(
@@ -23,7 +32,7 @@ pub fn run_with(
         }
         write!(output, "validating… ")?;
         match validate(&token) {
-            Some(name) => {
+            Ok(name) => {
                 writeln!(output, "ok — connected as \"{name}\"")?;
                 writeln!(
                     output,
@@ -32,8 +41,14 @@ pub fn run_with(
                 )?;
                 return Ok(token);
             }
-            None => {
+            Err(TokenError::Invalid) => {
                 writeln!(output, "invalid token, try again:")?;
+            }
+            Err(TokenError::Network(detail)) => {
+                writeln!(
+                    output,
+                    "can't reach Notion — check your connection ({detail}); try again:"
+                )?;
             }
         }
     }
@@ -48,10 +63,13 @@ pub async fn run() -> anyhow::Result<String> {
     let token = tokio::task::block_in_place(|| {
         run_with(stdin.lock(), stdout.lock(), |t| {
             let client = notion_api::NotionClient::new(t.to_string());
-            tokio::runtime::Handle::current()
-                .block_on(client.me())
-                .ok()
-                .filter(|n| !n.is_empty())
+            match tokio::runtime::Handle::current().block_on(client.me()) {
+                Ok(name) if !name.is_empty() => Ok(name),
+                Ok(_) => Err(TokenError::Invalid),
+                Err(notion_api::ApiError::Network(e)) => Err(TokenError::Network(e.to_string())),
+                Err(notion_api::ApiError::RetriesExhausted(what)) => Err(TokenError::Network(what)),
+                Err(_) => Err(TokenError::Invalid), // 401/403/etc — Notion answered and said no
+            }
         })
     })?;
     match crate::config::store_token(&token)? {
@@ -74,7 +92,11 @@ mod tests {
         let input = b"secret_good\n" as &[u8];
         let mut output = Vec::new();
         let token = run_with(input, &mut output, |t| {
-            (t == "secret_good").then(|| "My Bot".to_string())
+            if t == "secret_good" {
+                Ok("My Bot".to_string())
+            } else {
+                Err(TokenError::Invalid)
+            }
         })
         .unwrap();
         assert_eq!(token, "secret_good");
@@ -88,10 +110,38 @@ mod tests {
         let input = b"bad\nsecret_good\n" as &[u8];
         let mut output = Vec::new();
         let token = run_with(input, &mut output, |t| {
-            (t == "secret_good").then(|| "My Bot".to_string())
+            if t == "secret_good" {
+                Ok("My Bot".to_string())
+            } else {
+                Err(TokenError::Invalid)
+            }
         })
         .unwrap();
         assert_eq!(token, "secret_good");
         assert!(String::from_utf8(output).unwrap().contains("invalid"));
+    }
+
+    #[test]
+    fn network_failure_message_differs_from_invalid_token() {
+        let input = b"tok1\ntok2\n" as &[u8];
+        let mut output = Vec::new();
+        let mut calls = 0;
+        let token = run_with(input, &mut output, |_| {
+            calls += 1;
+            if calls == 1 {
+                Err(TokenError::Network("dns error".into()))
+            } else {
+                Ok("My Bot".to_string())
+            }
+        })
+        .unwrap();
+        assert_eq!(token, "tok2");
+        let printed = String::from_utf8(output).unwrap();
+        assert!(printed.contains("can't reach Notion — check your connection"));
+        assert!(printed.contains("dns error"));
+        assert!(
+            !printed.contains("invalid token"),
+            "network failure must not blame the token"
+        );
     }
 }

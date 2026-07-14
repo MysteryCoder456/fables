@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use notion_store::{PageRec, Store};
 use notion_tui::app::App;
 use notion_tui::ui::search::SearchState;
+use notion_tui::ui::textline::TextLine;
 
 fn page(id: &str, title: &str) -> PageRec {
     PageRec {
@@ -28,7 +29,7 @@ fn stronger_subsequence_match_outranks_earlier_fts_hit() {
 
     let mut app = App::new(store);
     app.search = Some(SearchState::new());
-    app.search.as_mut().unwrap().input = "map".to_string();
+    app.search.as_mut().unwrap().input = TextLine::new("map");
     app.refresh_search();
 
     let titles: Vec<String> = app

@@ -4,7 +4,7 @@ assertion_line: 117
 expression: term.backend()
 ---
 "┌ notion ──────────────────┐┌ Roadmap ─────────────────────┐"
-"│                          ││# Q3 Plan                     │"
+"│first sync in progress…   ││# Q3 Plan                     │"
 "│                          ││[ ] Ship it                   │"
 "│                          ││→ Sub page                    │"
 "│                          ││                              │"

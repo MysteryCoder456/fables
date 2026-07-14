@@ -508,6 +508,23 @@ impl App {
         self.refresh_current_view();
     }
 
+    /// Resolves a `dd` confirm: `y` deletes (block or row per the confirm's
+    /// kind) and points at the session-only undo; `n` drops it untouched.
+    fn confirm_delete_target(&mut self, confirmed: bool) {
+        let Some(state) = self.confirm.take() else { return };
+        if !confirmed {
+            return;
+        }
+        if let Some(id) = state.ids.first() {
+            match state.kind {
+                crate::ui::confirm::ConfirmKind::DeleteBlock => self.delete_block(id),
+                crate::ui::confirm::ConfirmKind::DeleteRow => self.delete_row(id),
+                _ => {}
+            }
+        }
+        self.notice = Some("deleted — press u to undo (this session)".into());
+    }
+
     /// Page view: prefer the cursor block's comments if it has any; else page-level.
     /// Table/Board: the selected row is itself a page — show its comments.
     fn open_comments(&mut self) {
@@ -654,8 +671,14 @@ impl App {
             }
             other => {
                 self.queue_return = Some(Box::new(other));
-                let ops = self.store.lock().unwrap().ops().unwrap_or_default();
-                self.view = View::Queue(crate::ui::queue::QueueView::new(ops));
+                let guard = self.store.lock().unwrap();
+                let ops = guard.ops().unwrap_or_default();
+                let summaries: Vec<String> = ops
+                    .iter()
+                    .map(|o| crate::describe::describe_op(o, &guard).summary)
+                    .collect();
+                drop(guard);
+                self.view = View::Queue(crate::ui::queue::QueueView::new(ops, summaries));
             }
         }
     }
@@ -675,8 +698,14 @@ impl App {
     fn refresh_queue(&mut self) {
         if let View::Queue(q) = &mut self.view {
             let cursor = q.cursor;
-            let ops = self.store.lock().unwrap().ops().unwrap_or_default();
-            let mut nq = crate::ui::queue::QueueView::new(ops);
+            let guard = self.store.lock().unwrap();
+            let ops = guard.ops().unwrap_or_default();
+            let summaries: Vec<String> = ops
+                .iter()
+                .map(|o| crate::describe::describe_op(o, &guard).summary)
+                .collect();
+            drop(guard);
+            let mut nq = crate::ui::queue::QueueView::new(ops, summaries);
             nq.cursor = cursor.min(nq.ops.len().saturating_sub(1));
             self.view = View::Queue(nq);
         }
@@ -950,7 +979,7 @@ impl App {
 
     pub fn refresh_search(&mut self) {
         let query = match &self.search {
-            Some(s) => s.input.clone(),
+            Some(s) => s.input.text().to_string(),
             None => return,
         };
         let mut hits = self.store.lock().unwrap().search(&query).unwrap_or_default();
@@ -1195,6 +1224,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                 view.cursor = 0;
             } else if km.is("bottom", key) {
                 view.cursor = view.row_count().saturating_sub(1);
+            } else if key.code == KeyCode::Char('d') && key.modifiers == KeyModifiers::CONTROL {
+                view.move_cursor(10);
+            } else if key.code == KeyCode::Char('u') && key.modifiers == KeyModifiers::CONTROL {
+                view.move_cursor(-10);
             } else if km.is("left", key) {
                 view.sort_col = view.sort_col.saturating_sub(1);
             } else if km.is("right", key) {
@@ -1214,6 +1247,14 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                 view.move_cursor_card(1);
             } else if (km.is("up", key) && key.modifiers == KeyModifiers::NONE) || key.code == KeyCode::Up {
                 view.move_cursor_card(-1);
+            } else if key.code == KeyCode::Char('d') && key.modifiers == KeyModifiers::CONTROL {
+                view.move_cursor_card(10);
+            } else if key.code == KeyCode::Char('u') && key.modifiers == KeyModifiers::CONTROL {
+                view.move_cursor_card(-10);
+            } else if km.is("top", key) {
+                view.card = 0;
+            } else if km.is("bottom", key) {
+                view.card = view.cards_in(view.col).len().saturating_sub(1);
             } else if km.is("left", key) {
                 view.move_cursor_col(-1);
             } else if km.is("right", key) {
@@ -1314,6 +1355,9 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             crate::ui::confirm::ConfirmKind::DeleteProtected => app.confirm_delete_protected(confirmed),
             crate::ui::confirm::ConfirmKind::ApplyDespiteWarnings => {
                 app.confirm_apply_despite_warnings(confirmed)
+            }
+            crate::ui::confirm::ConfirmKind::DeleteBlock | crate::ui::confirm::ConfirmKind::DeleteRow => {
+                app.confirm_delete_target(confirmed)
             }
         }
         return;
@@ -1622,8 +1666,20 @@ pub fn apply_action(app: &mut App, action: Action) {
         }
         Action::Back(id) => app.open_page(&id),
         Action::ToggleTodo(id) => app.toggle_todo(&id),
-        Action::DeleteBlock(id) => app.delete_block(&id),
-        Action::DeleteRow(id) => app.delete_row(&id),
+        Action::DeleteBlock(id) => {
+            app.confirm = Some(crate::ui::confirm::ConfirmState {
+                message: "delete this block?".into(),
+                ids: vec![id],
+                kind: crate::ui::confirm::ConfirmKind::DeleteBlock,
+            });
+        }
+        Action::DeleteRow(id) => {
+            app.confirm = Some(crate::ui::confirm::ConfirmState {
+                message: "delete this row?".into(),
+                ids: vec![id],
+                kind: crate::ui::confirm::ConfirmKind::DeleteRow,
+            });
+        }
         Action::MoveCard {
             row_id,
             prop_name,

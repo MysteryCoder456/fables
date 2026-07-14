@@ -10,7 +10,10 @@ pub struct Config {
     pub mouse: bool,
     pub editor: Option<String>,
     pub keys: HashMap<String, String>,
+    pub warnings: Vec<String>,
 }
+
+pub const KNOWN_THEMES: &[&str] = &["default", "dark", "light"];
 
 const KEYRING_SERVICE: &str = "notion-tui";
 const KEYRING_USER: &str = "integration-token";
@@ -87,19 +90,25 @@ pub fn load() -> anyhow::Result<Config> {
 /// defense-in-depth: `store_token`'s own read-back guard should normally
 /// catch that first, but first-run shouldn't depend on the roundtrip).
 pub fn load_with_token(token: Option<String>) -> anyhow::Result<Config> {
-    let file = dirs::config_dir()
-        .map(|d| d.join("notion-tui/config.toml"))
+    let path = dirs::config_dir().map(|d| d.join("notion-tui/config.toml"));
+    let file = path
+        .as_ref()
         .filter(|p| p.exists())
         .and_then(|p| std::fs::read_to_string(p).ok());
     let default_db = dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("notion-tui/notion.db");
+    let file_existed = file.is_some();
     from_sources(
         token.or_else(token_from_keyring),
         std::env::var("NOTION_TOKEN").ok(),
         file.as_deref(),
         default_db,
     )
+    .map_err(|e| match (&path, file_existed) {
+        (Some(p), true) => e.context(format!("in config file {}", p.display())),
+        _ => e,
+    })
 }
 
 pub fn from_sources(
@@ -121,6 +130,15 @@ pub fn from_sources(
              or put token = \"...\" in ~/.config/notion-tui/config.toml"
             )
         })?;
+    let mut warnings = Vec::new();
+    let theme = file
+        .get("theme")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default")
+        .to_string();
+    if !KNOWN_THEMES.contains(&theme.as_str()) {
+        warnings.push(format!("unknown theme \"{theme}\" — using default"));
+    }
     Ok(Config {
         token,
         poll_interval_secs: file
@@ -132,11 +150,7 @@ pub fn from_sources(
             .and_then(|v| v.as_str())
             .map(PathBuf::from)
             .unwrap_or(default_db),
-        theme: file
-            .get("theme")
-            .and_then(|v| v.as_str())
-            .unwrap_or("default")
-            .to_string(),
+        theme,
         mouse: file.get("mouse").and_then(|v| v.as_bool()).unwrap_or(true),
         editor: file.get("editor").and_then(|v| v.as_str()).map(str::to_string),
         keys: file
@@ -148,6 +162,7 @@ pub fn from_sources(
                     .collect()
             })
             .unwrap_or_default(),
+        warnings,
     })
 }
 
@@ -254,5 +269,44 @@ mod tests {
             let mode = std::fs::metadata(&path).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600);
         }
+    }
+
+    #[test]
+    fn toml_parse_error_reports_the_line() {
+        let err = from_sources(
+            None,
+            Some("tok".into()),
+            Some("theme = [oops"),
+            PathBuf::from("/tmp/x.db"),
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.to_lowercase().contains("line"), "no line info in: {msg}");
+    }
+
+    #[test]
+    fn unknown_theme_warns_instead_of_silently_defaulting() {
+        let cfg = from_sources(
+            None,
+            Some("tok".into()),
+            Some("theme = \"solarized\""),
+            PathBuf::from("/tmp/x.db"),
+        )
+        .unwrap();
+        assert_eq!(cfg.warnings.len(), 1);
+        assert!(cfg.warnings[0].contains("solarized"));
+        assert!(cfg.warnings[0].contains("unknown theme"));
+    }
+
+    #[test]
+    fn known_theme_produces_no_warning() {
+        let cfg = from_sources(
+            None,
+            Some("tok".into()),
+            Some("theme = \"dark\""),
+            PathBuf::from("/tmp/x.db"),
+        )
+        .unwrap();
+        assert!(cfg.warnings.is_empty());
     }
 }

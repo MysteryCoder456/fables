@@ -274,6 +274,26 @@ impl Store {
         Ok(out)
     }
 
+    /// Single-row lookup by id, including archived rows (queue descriptions of
+    /// delete_row ops must still resolve the row's title).
+    pub fn get_row(&self, id: &str) -> anyhow::Result<Option<RowRec>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, data_source_id, properties, last_edited_time, archived
+             FROM rows WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query([id])?;
+        Ok(match rows.next()? {
+            Some(r) => Some(RowRec {
+                id: r.get(0)?,
+                data_source_id: r.get(1)?,
+                properties: r.get(2)?,
+                last_edited_time: r.get(3)?,
+                archived: r.get::<_, i64>(4)? != 0,
+            }),
+            None => None,
+        })
+    }
+
     pub fn search(&self, query: &str) -> anyhow::Result<Vec<SearchHit>> {
         if query.trim().is_empty() {
             return Ok(Vec::new());

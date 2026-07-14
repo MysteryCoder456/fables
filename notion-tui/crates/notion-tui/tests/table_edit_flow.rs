@@ -57,7 +57,7 @@ fn o_opens_input_and_submit_creates_row_with_title() {
     let mut app = app_on_table(store.clone());
 
     dispatch_key(&mut app, KeyEvent::from(KeyCode::Char('o')));
-    assert_eq!(app.input.as_ref().unwrap().value, "");
+    assert_eq!(app.input.as_ref().unwrap().value(), "");
 
     type_str(&mut app, "New task");
     dispatch_key(&mut app, KeyEvent::from(KeyCode::Enter));
@@ -79,6 +79,7 @@ fn dd_deletes_selected_row() {
     dispatch_key(&mut app, KeyEvent::from(KeyCode::Char('d')));
     assert_eq!(store.lock().unwrap().rows("ds1").unwrap().len(), 1); // first 'd' just arms
     dispatch_key(&mut app, KeyEvent::from(KeyCode::Char('d')));
+    dispatch_key(&mut app, KeyEvent::from(KeyCode::Char('y')));
 
     let rows = store.lock().unwrap().rows("ds1").unwrap();
     assert!(rows.is_empty()); // archived rows are excluded from rows()

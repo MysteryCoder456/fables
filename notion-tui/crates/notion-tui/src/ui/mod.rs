@@ -11,6 +11,7 @@ pub mod queue;
 pub mod search;
 pub mod sidebar;
 pub mod table;
+pub mod textline;
 pub mod theme;
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -157,25 +158,25 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     );
 
     if let Some(search_state) = &mut app.search {
-        search::render(f, search_state);
+        search::render(f, search_state, &theme);
     }
     if let Some(input_state) = &app.input {
-        input::render(f, input_state);
+        input::render(f, input_state, &theme);
     }
     if let Some(props_state) = &app.props {
-        props::render(f, props_state);
+        props::render(f, props_state, &theme);
     }
     if let Some(confirm_state) = &app.confirm {
-        confirm::render(f, confirm_state);
+        confirm::render(f, confirm_state, &theme);
     }
     if let Some(palette_state) = &mut app.palette {
-        palette::render(f, palette_state);
+        palette::render(f, palette_state, &theme);
     }
     if let Some(picker_state) = &mut app.picker {
-        picker::render(f, picker_state);
+        picker::render(f, picker_state, &theme);
     }
     if app.help_open {
-        help::render(f, &app.keymap);
+        help::render(f, &app.keymap, &theme);
     }
 
     let mut layout = LayoutRects {

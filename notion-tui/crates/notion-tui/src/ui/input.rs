@@ -1,11 +1,14 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 use ratatui::Frame;
+
+use crate::ui::textline::{TextLine, TextLineEvent};
+use crate::ui::theme::Theme;
 
 pub struct InputState {
     pub title: String,
-    pub value: String,
+    pub line: TextLine,
 }
 
 pub enum InputAction {
@@ -19,23 +22,22 @@ impl InputState {
     pub fn new(title: impl Into<String>, initial: impl Into<String>) -> InputState {
         InputState {
             title: title.into(),
-            value: initial.into(),
+            line: TextLine::new(initial),
         }
+    }
+
+    pub fn value(&self) -> &str {
+        self.line.text()
     }
 
     pub fn on_key(&mut self, key: KeyEvent) -> InputAction {
         match key.code {
             KeyCode::Esc => InputAction::Cancel,
-            KeyCode::Enter => InputAction::Submit(self.value.clone()),
-            KeyCode::Backspace => {
-                self.value.pop();
-                InputAction::Changed
-            }
-            KeyCode::Char(c) => {
-                self.value.push(c);
-                InputAction::Changed
-            }
-            _ => InputAction::None,
+            KeyCode::Enter => InputAction::Submit(self.line.text().to_string()),
+            _ => match self.line.on_key(key) {
+                TextLineEvent::Edited => InputAction::Changed,
+                TextLineEvent::Moved | TextLineEvent::Ignored => InputAction::None,
+            },
         }
     }
 }
@@ -48,20 +50,21 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     Rect { x, y, width, height }
 }
 
-pub fn render(f: &mut Frame, state: &InputState) {
+pub fn render(f: &mut Frame, state: &InputState, theme: &Theme) {
     let area = f.area();
     let popup_width = (area.width * 2 / 3).clamp(20, 70);
     let popup = centered_rect(popup_width, 3, area);
 
     f.render_widget(Clear, popup);
     f.render_widget(
-        Paragraph::new(state.value.as_str()).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(format!(" {} ", state.title)),
-        ),
+        Paragraph::new(state.line.text())
+            .block(crate::ui::theme::popup_block(format!(" {} ", state.title), theme)),
         popup,
     );
+    f.set_cursor_position(ratatui::layout::Position::new(
+        popup.x + 1 + state.line.cursor_cols().min(popup.width.saturating_sub(2)),
+        popup.y + 1,
+    ));
 }
 
 #[cfg(test)]
@@ -79,14 +82,17 @@ mod tests {
             s.on_key(KeyEvent::from(KeyCode::Char('i'))),
             InputAction::Changed
         ));
-        assert_eq!(s.value, "hi");
+        assert_eq!(s.value(), "hi");
         assert!(matches!(
             s.on_key(KeyEvent::from(KeyCode::Backspace)),
             InputAction::Changed
         ));
-        assert_eq!(s.value, "h");
+        assert_eq!(s.value(), "h");
+        s.on_key(KeyEvent::from(KeyCode::Left));
+        s.on_key(KeyEvent::from(KeyCode::Char('a')));
+        assert_eq!(s.value(), "ah"); // typed before the final grapheme
         match s.on_key(KeyEvent::from(KeyCode::Enter)) {
-            InputAction::Submit(v) => assert_eq!(v, "h"),
+            InputAction::Submit(v) => assert_eq!(v, "ah"),
             _ => panic!("expected Submit"),
         }
     }

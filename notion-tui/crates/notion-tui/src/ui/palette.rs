@@ -1,8 +1,10 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
+
+use crate::ui::textline::TextLine;
+use crate::ui::theme::Theme;
 
 pub const COMMANDS: &[&str] = &[
     "help",
@@ -17,7 +19,7 @@ pub const COMMANDS: &[&str] = &[
 ];
 
 pub struct PaletteState {
-    pub input: String,
+    pub input: TextLine,
     pub cursor: usize,
     pub list_state: ListState,
 }
@@ -32,7 +34,7 @@ pub enum PaletteAction {
 impl PaletteState {
     pub fn new() -> PaletteState {
         PaletteState {
-            input: String::new(),
+            input: TextLine::new(""),
             cursor: 0,
             list_state: ListState::default(),
         }
@@ -40,7 +42,7 @@ impl PaletteState {
 
     pub fn matches(&self) -> Vec<&'static str> {
         let items: Vec<(&'static str, String)> = COMMANDS.iter().map(|c| (*c, c.to_string())).collect();
-        crate::fuzzy::subsequence_rank(&self.input, items)
+        crate::fuzzy::subsequence_rank(self.input.text(), items)
     }
 
     pub fn on_key(&mut self, key: KeyEvent) -> PaletteAction {
@@ -61,17 +63,13 @@ impl PaletteState {
                 self.cursor = self.cursor.saturating_sub(1);
                 PaletteAction::None
             }
-            KeyCode::Backspace => {
-                self.input.pop();
-                self.cursor = 0;
-                PaletteAction::Changed
-            }
-            KeyCode::Char(c) => {
-                self.input.push(c);
-                self.cursor = 0;
-                PaletteAction::Changed
-            }
-            _ => PaletteAction::None,
+            _ => match self.input.on_key(key) {
+                crate::ui::textline::TextLineEvent::Edited => {
+                    self.cursor = 0;
+                    PaletteAction::Changed
+                }
+                _ => PaletteAction::None,
+            },
         }
     }
 }
@@ -93,7 +91,7 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     }
 }
 
-pub fn render(f: &mut Frame, state: &mut PaletteState) {
+pub fn render(f: &mut Frame, state: &mut PaletteState, theme: &Theme) {
     let area = f.area();
     let popup = centered_rect((area.width / 2).clamp(24, 50), 12, area);
     f.render_widget(Clear, popup);
@@ -102,15 +100,19 @@ pub fn render(f: &mut Frame, state: &mut PaletteState) {
         .constraints([Constraint::Length(3), Constraint::Min(1)])
         .split(popup);
     f.render_widget(
-        Paragraph::new(state.input.as_str()).block(Block::default().borders(Borders::ALL).title(" : ")),
+        Paragraph::new(state.input.text()).block(crate::ui::theme::popup_block(" : ".into(), theme)),
         inner[0],
     );
+    f.set_cursor_position(ratatui::layout::Position::new(
+        inner[0].x + 1 + state.input.cursor_cols().min(inner[0].width.saturating_sub(2)),
+        inner[0].y + 1,
+    ));
     let items: Vec<ListItem> = state.matches().iter().map(|c| ListItem::new(*c)).collect();
     state.list_state.select(Some(state.cursor));
     f.render_stateful_widget(
         List::new(items)
-            .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-            .block(Block::default().borders(Borders::ALL)),
+            .highlight_style(theme.highlight)
+            .block(crate::ui::theme::popup_block(" : ".into(), theme)),
         inner[1],
         &mut state.list_state,
     );
@@ -123,14 +125,14 @@ mod tests {
     #[test]
     fn matches_are_subsequence_not_substring() {
         let mut p = PaletteState::new();
-        p.input = "bd".to_string(); // not a substring of "board", but is a subsequence
+        p.input = TextLine::new("bd"); // not a substring of "board", but is a subsequence
         assert!(p.matches().contains(&"board"));
     }
 
     #[test]
     fn non_subsequence_input_matches_nothing() {
         let mut p = PaletteState::new();
-        p.input = "zzz".to_string();
+        p.input = TextLine::new("zzz");
         assert!(p.matches().is_empty());
     }
 }

@@ -69,7 +69,7 @@ fn i_prefills_input_with_block_text_and_submit_updates_it() {
     let mut app = app_on_page(store.clone());
 
     dispatch_key(&mut app, KeyEvent::from(KeyCode::Char('i')));
-    assert_eq!(app.input.as_ref().unwrap().value, "First");
+    assert_eq!(app.input.as_ref().unwrap().value(), "First");
 
     // Clear the prefilled text and type something new.
     for _ in 0.."First".len() {
@@ -91,7 +91,7 @@ fn a_opens_empty_input_and_submit_inserts_block_after_cursor() {
     let mut app = app_on_page(store.clone());
 
     dispatch_key(&mut app, KeyEvent::from(KeyCode::Char('a')));
-    assert_eq!(app.input.as_ref().unwrap().value, "");
+    assert_eq!(app.input.as_ref().unwrap().value(), "");
 
     type_str(&mut app, "Brand new");
     dispatch_key(&mut app, KeyEvent::from(KeyCode::Enter));

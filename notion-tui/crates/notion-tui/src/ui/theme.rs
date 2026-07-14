@@ -1,4 +1,6 @@
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::Span;
+use ratatui::widgets::{Block, Borders};
 
 #[derive(Clone, Debug)]
 pub struct Theme {
@@ -34,6 +36,14 @@ pub fn named(name: &str) -> Theme {
             title: Style::default(),
         },
     }
+}
+
+/// The one popup chrome every modal shares: themed border + themed title.
+pub fn popup_block(title: String, theme: &Theme) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme.border)
+        .title(Span::styled(title, theme.title))
 }
 
 #[cfg(test)]

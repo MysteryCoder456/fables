@@ -79,7 +79,10 @@ Collapsible sidebar (workspace tree: pages hierarchy, databases, favorites) + ma
 
 ### 4.3 Keyboard model
 
-Vim-flavored, fully rebindable via config file.
+Vim-flavored, rebindable via config file (plain keys, named keys, and `ctrl+x`
+chords) — except a small fixed set: Tab (focus switch), Ctrl+d/Ctrl+u
+(half-page scroll), Ctrl+P (search), and Backspace-as-back. (Amended per the
+2026-07-12 production-polish design, M8.10.)
 
 - Motion: `j/k` cursor, `h/l` collapse/expand (page) or column switch (board), `g/G` top/bottom, `Ctrl+d/u` half-page.
 - Navigation: `Enter` open/follow, `Backspace` or `-` back (browser-style history stack), `Tab` cycle panes, `1` toggle sidebar, `/` or `Ctrl+P` search, `c` comments, `?` help overlay, `:` command palette (rename, move page, change view, group-by, sync now, queue screen, …).

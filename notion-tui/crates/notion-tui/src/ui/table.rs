@@ -5,6 +5,8 @@ use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Row as TRow, Table, TableState};
 use ratatui::Frame;
 use serde_json::Value;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::ui::theme::Theme;
 
@@ -260,6 +262,41 @@ impl TableView {
     }
 }
 
+/// Column width by property type (spec M8.8: checkbox narrow, URL wide).
+fn column_constraint(col: &Column, is_title: bool) -> Constraint {
+    if is_title {
+        return Constraint::Min(20);
+    }
+    match col.prop_type.as_str() {
+        "checkbox" => Constraint::Length(6),
+        "number" => Constraint::Length(10),
+        "date" => Constraint::Length(12),
+        "url" | "email" => Constraint::Length(28),
+        _ => Constraint::Length(14),
+    }
+}
+
+/// Truncates to at most `max_cols` display columns, appending '…' when
+/// anything was cut. Grapheme-safe: never slices inside an emoji/CJK char.
+pub fn truncate_ellipsis(s: &str, max_cols: u16) -> String {
+    if (s.width() as u16) <= max_cols {
+        return s.to_string();
+    }
+    let budget = max_cols.saturating_sub(1);
+    let mut out = String::new();
+    let mut used: u16 = 0;
+    for g in s.graphemes(true) {
+        let gw = g.width() as u16;
+        if used + gw > budget {
+            break;
+        }
+        out.push_str(g);
+        used += gw;
+    }
+    out.push('…');
+    out
+}
+
 fn filter_suffix(filter: &Option<FilterState>, columns: &[Column]) -> String {
     match filter {
         None => String::new(),
@@ -271,6 +308,30 @@ fn filter_suffix(filter: &Option<FilterState>, columns: &[Column]) -> String {
 }
 
 pub fn render(f: &mut Frame, area: Rect, view: &mut TableView, focused: bool, theme: &Theme) {
+    let block_title = format!(
+        " {}{} ",
+        view.ds.title,
+        filter_suffix(&view.filter, &view.columns)
+    );
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme.border)
+        .title(Span::styled(block_title, theme.title));
+    let visible = view.visible();
+    if visible.is_empty() {
+        let hint = if view.filter.is_some() && !view.rows.is_empty() {
+            "no rows match the filter"
+        } else {
+            "no rows — press o to add one"
+        };
+        f.render_widget(
+            ratatui::widgets::Paragraph::new(hint)
+                .style(Style::default().add_modifier(Modifier::DIM))
+                .block(block),
+            area,
+        );
+        return;
+    }
     let header = TRow::new(
         view.columns
             .iter()
@@ -291,15 +352,47 @@ pub fn render(f: &mut Frame, area: Rect, view: &mut TableView, focused: bool, th
             .collect::<Vec<_>>(),
     )
     .style(Style::default().add_modifier(Modifier::BOLD));
-    let visible = view.visible();
+    let widths: Vec<Constraint> = view
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(i, c)| column_constraint(c, i == 0))
+        .collect();
+    // Concrete per-column budgets for ellipsis (ratatui clips silently otherwise):
+    // fixed columns take their Length; the title column gets the leftover.
+    let fixed_sum: u16 = widths
+        .iter()
+        .map(|w| if let Constraint::Length(n) = w { *n } else { 0 })
+        .sum();
+    let spacing = view.columns.len().saturating_sub(1) as u16; // Table's default column_spacing = 1
+    let title_budget = area
+        .width
+        .saturating_sub(2) // borders
+        .saturating_sub(spacing)
+        .saturating_sub(fixed_sum)
+        .max(20);
+    let budgets: Vec<u16> = widths
+        .iter()
+        .map(|w| {
+            if let Constraint::Length(n) = w {
+                *n
+            } else {
+                title_budget
+            }
+        })
+        .collect();
     let rows: Vec<TRow> = visible
         .iter()
         .map(|r| {
-            let cells: Vec<String> = view.columns.iter().map(|c| view.cell(r, c)).collect();
+            let cells: Vec<String> = view
+                .columns
+                .iter()
+                .enumerate()
+                .map(|(i, c)| truncate_ellipsis(&view.cell(r, c), budgets[i]))
+                .collect();
             TRow::new(cells)
         })
         .collect();
-    let widths = column_widths(&view.columns);
     let highlight = if focused {
         theme.highlight
     } else {
@@ -310,19 +403,7 @@ pub fn render(f: &mut Frame, area: Rect, view: &mut TableView, focused: bool, th
         Table::new(rows, widths)
             .header(header)
             .row_highlight_style(highlight)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(theme.border)
-                    .title(Span::styled(
-                        format!(
-                            " {}{} ",
-                            view.ds.title,
-                            filter_suffix(&view.filter, &view.columns)
-                        ),
-                        theme.title,
-                    )),
-            ),
+            .block(block),
         area,
         &mut view.table_state,
     );
@@ -484,5 +565,76 @@ mod tests {
             "2026-07-05"
         );
         assert_eq!(cell_text(&json!({"type": "checkbox", "checkbox": false})), "☐");
+    }
+
+    #[test]
+    fn truncate_ellipsis_is_width_aware_and_grapheme_safe() {
+        assert_eq!(truncate_ellipsis("hello", 10), "hello");
+        assert_eq!(truncate_ellipsis("hello world", 6), "hello…");
+        // CJK chars are 2 columns wide: 日本 = 4 cols, +… = 5.
+        assert_eq!(truncate_ellipsis("日本語テスト", 5), "日本…");
+        // A budget of 3 can't fit the first 2-wide char plus…: just the char that fits.
+        assert_eq!(truncate_ellipsis("日本語", 3), "日…");
+    }
+
+    #[test]
+    fn column_widths_are_type_aware() {
+        let cb = Column {
+            name: "Done".into(),
+            prop_type: "checkbox".into(),
+        };
+        let url = Column {
+            name: "Link".into(),
+            prop_type: "url".into(),
+        };
+        match column_constraint(&cb, false) {
+            Constraint::Length(n) => assert!(n <= 8, "checkbox must be narrow, got {n}"),
+            other => panic!("expected Length, got {other:?}"),
+        }
+        match column_constraint(&url, false) {
+            Constraint::Length(n) => assert!(n >= 24, "url must be wide, got {n}"),
+            other => panic!("expected Length, got {other:?}"),
+        }
+        assert!(matches!(
+            column_constraint(
+                &Column {
+                    name: "Name".into(),
+                    prop_type: "title".into()
+                },
+                true
+            ),
+            Constraint::Min(20)
+        ));
+    }
+
+    #[test]
+    fn render_clips_long_cells_with_ellipsis() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut v = TableView::new(
+            ds(),
+            vec![row(
+                "r1",
+                "a task with a very long name that cannot fit",
+                false,
+                "High",
+            )],
+        );
+        let theme = crate::ui::theme::named("default");
+        let backend = TestBackend::new(46, 8); // narrow: title column gets squeezed
+        let mut term = Terminal::new(backend).unwrap();
+        term.draw(|f| render(f, f.area(), &mut v, true, &theme)).unwrap();
+        let content: String = term
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(
+            content.contains('…'),
+            "long cell should be ellipsized:\n{content}"
+        );
     }
 }

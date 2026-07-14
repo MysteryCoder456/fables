@@ -61,18 +61,39 @@ fn space_toggles_todo_and_queues_op() {
 }
 
 #[test]
-fn dd_deletes_block_under_cursor() {
+fn dd_asks_for_confirmation_then_y_deletes() {
     let store = store_with_todo();
     let mut app = app_on_todo_page(store.clone());
 
     dispatch_key(&mut app, KeyEvent::from(KeyCode::Char('d')));
-    assert!(store.lock().unwrap().page_blocks("p1").unwrap().len() == 1); // first 'd' is just arming
     dispatch_key(&mut app, KeyEvent::from(KeyCode::Char('d')));
+    assert!(app.confirm.is_some(), "dd must confirm before deleting");
+    assert_eq!(
+        store.lock().unwrap().page_blocks("p1").unwrap().len(),
+        1,
+        "not deleted yet"
+    );
 
+    dispatch_key(&mut app, KeyEvent::from(KeyCode::Char('y')));
     let s = store.lock().unwrap();
     assert!(s.page_blocks("p1").unwrap().is_empty());
-    assert_eq!(s.ops().unwrap().len(), 1);
     assert_eq!(s.ops().unwrap()[0].op_type, "delete_block");
+    drop(s);
+    assert!(app.notice.as_deref().unwrap_or("").contains("undo"));
+}
+
+#[test]
+fn dd_then_n_keeps_the_block() {
+    let store = store_with_todo();
+    let mut app = app_on_todo_page(store.clone());
+
+    dispatch_key(&mut app, KeyEvent::from(KeyCode::Char('d')));
+    dispatch_key(&mut app, KeyEvent::from(KeyCode::Char('d')));
+    dispatch_key(&mut app, KeyEvent::from(KeyCode::Char('n')));
+
+    assert!(app.confirm.is_none());
+    assert_eq!(store.lock().unwrap().page_blocks("p1").unwrap().len(), 1);
+    assert!(store.lock().unwrap().ops().unwrap().is_empty());
 }
 
 #[test]

@@ -90,8 +90,22 @@ impl SidebarState {
 }
 
 pub fn render(f: &mut Frame, area: Rect, state: &mut SidebarState, focused: bool, theme: &Theme) {
-    let items: Vec<ListItem> = state
-        .visible()
+    let title = if focused { " notion ● " } else { " notion " };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme.border)
+        .title(Span::styled(title, theme.title));
+    let visible = state.visible();
+    if visible.is_empty() {
+        f.render_widget(
+            ratatui::widgets::Paragraph::new("first sync in progress…")
+                .style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::DIM))
+                .block(block),
+            area,
+        );
+        return;
+    }
+    let items: Vec<ListItem> = visible
         .iter()
         .map(|v| {
             let marker = match v.node.kind {
@@ -102,7 +116,6 @@ pub fn render(f: &mut Frame, area: Rect, state: &mut SidebarState, focused: bool
             ListItem::new(Line::from(line))
         })
         .collect();
-    let title = if focused { " notion ● " } else { " notion " };
     let highlight = if focused {
         theme.highlight
     } else {
@@ -110,12 +123,7 @@ pub fn render(f: &mut Frame, area: Rect, state: &mut SidebarState, focused: bool
     };
     state.list_state.select(Some(state.cursor));
     f.render_stateful_widget(
-        List::new(items).highlight_style(highlight).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(theme.border)
-                .title(Span::styled(title, theme.title)),
-        ),
+        List::new(items).highlight_style(highlight).block(block),
         area,
         &mut state.list_state,
     );
